@@ -32,7 +32,7 @@ final class DropRoutingTests: XCTestCase {
     }
 
     @MainActor
-    func testImageDropRoutesToDefaultImageToPDFAction() {
+    func testImageDropRoutesToRecommendedOptimizeAction() {
         let externalProvider = DropExternalProvider()
         let imageURL = URL(fileURLWithPath: "/tmp/sample.png")
         fileActionProvider.classification = DropClassification(
@@ -46,7 +46,8 @@ final class DropRoutingTests: XCTestCase {
                     fileSize: 0
                 )
             ],
-            defaultAction: .imageToPDF
+            recommendedAction: .optimizeImages,
+            secondaryActions: [.resizeImages, .imageToPDF]
         )
 
         let viewModel = MenuBarViewModel(
@@ -59,8 +60,77 @@ final class DropRoutingTests: XCTestCase {
 
         viewModel.handleDroppedItems([imageURL])
 
-        XCTAssertEqual(fileActionProvider.lastExecuteAction, .imageToPDF)
+        XCTAssertEqual(fileActionProvider.lastExecuteAction, .optimizeImages)
         XCTAssertEqual(viewModel.notchDropState, .success)
+    }
+
+    @MainActor
+    func testPreferredDropActionOverridesRecommended() {
+        let externalProvider = DropExternalProvider()
+        let imageURL = URL(fileURLWithPath: "/tmp/sample.png")
+        fileActionProvider.classification = DropClassification(
+            kind: .images,
+            descriptors: [
+                DroppedFileDescriptor(
+                    id: imageURL.path,
+                    url: imageURL,
+                    utType: "public.png",
+                    fileName: "sample.png",
+                    fileSize: 0
+                )
+            ],
+            recommendedAction: .optimizeImages,
+            secondaryActions: [.resizeImages, .imageToPDF]
+        )
+
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            fileActionService: fileActionProvider,
+            defaults: defaults
+        )
+
+        viewModel.handleDroppedItems([imageURL], preferredAction: .imageToPDF)
+
+        XCTAssertEqual(fileActionProvider.lastExecuteAction, .imageToPDF)
+    }
+
+    @MainActor
+    func testDragSessionTransitionsToTargetingState() {
+        let externalProvider = DropExternalProvider()
+        let imageURL = URL(fileURLWithPath: "/tmp/sample.png")
+        fileActionProvider.classification = DropClassification(
+            kind: .images,
+            descriptors: [
+                DroppedFileDescriptor(
+                    id: imageURL.path,
+                    url: imageURL,
+                    utType: "public.png",
+                    fileName: "sample.png",
+                    fileSize: 0
+                )
+            ],
+            recommendedAction: .optimizeImages,
+            secondaryActions: []
+        )
+
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            fileActionService: fileActionProvider,
+            defaults: defaults
+        )
+
+        viewModel.beginDragSession(with: [imageURL])
+        XCTAssertEqual(viewModel.notchDropState, .predrag)
+
+        viewModel.updateDragTarget(.optimizeImages)
+        XCTAssertEqual(viewModel.notchDropState, .targeting(.optimizeImages))
+
+        viewModel.endDragSession()
+        XCTAssertFalse(viewModel.dragSession.isFileDrag)
     }
 
     func testHubAnchorUsesVisibleMidXOnNonNotchDisplay() {
@@ -107,7 +177,12 @@ private final class DropExternalProvider: ExternalMenuBarProviding {
         subject.eraseToAnyPublisher()
     }
 
+    var hiddenShelfPublisher: AnyPublisher<[ExternalMenuBarItem], Never> {
+        hiddenSubject.eraseToAnyPublisher()
+    }
+
     private let subject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
+    private let hiddenSubject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
 
     func start() {}
     func stop() {}
@@ -117,6 +192,8 @@ private final class DropExternalProvider: ExternalMenuBarProviding {
         ExternalModeUpdateResult(effectiveMode: mode, downgradeReason: nil)
     }
 
+    func revealHiddenItem(_ itemID: String) -> Bool { true }
+
     func performPrimaryAction(for itemID: String) -> Bool { true }
     func currentAuthState() -> MirrorAuthState { .granted }
     func requestPermission() -> MirrorAuthState { .granted }
@@ -124,7 +201,7 @@ private final class DropExternalProvider: ExternalMenuBarProviding {
 }
 
 private final class DropFileActionProvider: FileActionExecuting {
-    var classification = DropClassification(kind: .unsupported, descriptors: [], defaultAction: nil)
+    var classification = DropClassification(kind: .unsupported, descriptors: [], recommendedAction: nil, secondaryActions: [])
     var lastExecuteAction: NotchActionKind?
 
     func classify(urls: [URL]) -> DropClassification {
@@ -134,9 +211,11 @@ private final class DropFileActionProvider: FileActionExecuting {
     func availableActions(for kind: DropContentKind) -> [NotchActionKind] {
         switch kind {
         case .images:
-            return [.imageToPDF, .compressZip, .sendToWorkbench, .moveToTrash]
+            return [.optimizeImages, .resizeImages, .imageToPDF, .compressZip, .sendToWorkbench, .moveToTrash]
         case .pdfs:
-            return [.pdfToImages, .compressZip, .sendToWorkbench, .moveToTrash]
+            return [.optimizePDFKeepText, .pdfToImages, .compressZip, .sendToWorkbench, .moveToTrash]
+        case .zipArchives:
+            return [.extractZip, .compressZip, .sendToWorkbench, .moveToTrash]
         case .mixed:
             return [.compressZip, .sendToWorkbench, .moveToTrash]
         case .unsupported:
@@ -146,7 +225,7 @@ private final class DropFileActionProvider: FileActionExecuting {
 
     func execute(action: NotchActionKind, inputs: [DroppedFileDescriptor], outputPolicy: FileOutputPolicy) throws -> ActionExecutionResult {
         lastExecuteAction = action
-        return ActionExecutionResult(action: action, outputs: [], message: "ok", undoToken: nil)
+        return ActionExecutionResult(action: action, outputs: [], message: "ok", undoToken: nil, spaceDeltaBytes: 0, warnings: [])
     }
 
     func undo(token: UndoToken) -> Bool { true }

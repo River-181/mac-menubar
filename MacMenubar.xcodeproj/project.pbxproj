@@ -10,6 +10,8 @@
 		07148350E2C208537F3CE43C /* AXMenuBarScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE5DB99939E5C23876CC61F9 /* AXMenuBarScanner.swift */; };
 		0A5E5AE43125C64F37726012 /* AXActionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A084AF8CD99264D6DB490D8 /* AXActionBridge.swift */; };
 		0DFE6A670081D64EB338860C /* SystemMetricsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43463D5CAF7CA18F46260691 /* SystemMetricsService.swift */; };
+		13AFB46751A116CFB3EEB15F /* DragSessionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93461CC1DB7C8F6136A9A019 /* DragSessionModels.swift */; };
+		1A5AF4926E37283CA52DCE24 /* ExternalHiddenShelfTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D41E15C420372B947E6C3A0 /* ExternalHiddenShelfTests.swift */; };
 		1B299D8737A14F96A298DF15 /* WorkbenchStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6F0A6E3D0CBEB9F74444508 /* WorkbenchStore.swift */; };
 		1F93AD81663D600004D128FD /* NotchLayoutCalculatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56C6F592B32E5FBC7D6940B7 /* NotchLayoutCalculatorTests.swift */; };
 		3B3FFFF034E588D4C020021F /* NotchActionModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 938E06E22537B18BA8D2DEA2 /* NotchActionModels.swift */; };
@@ -27,6 +29,7 @@
 		B9A2A361FCAA7D2C1E2065A7 /* ExternalIconPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F55F9C2756FD793F51131B40 /* ExternalIconPolicyTests.swift */; };
 		C525A45F1D225AC68C298C91 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49D3A0581EB84269064E1EB8 /* App.swift */; };
 		DDA670E0C2A38F9C387ED876 /* ExternalMenuBarItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7BA8426C5B714075D127FC /* ExternalMenuBarItem.swift */; };
+		E0C6397FFA3D670C4D470C69 /* DropTrackingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87B9BD68E50EF03922350B13 /* DropTrackingView.swift */; };
 		E129A43C83A5A0A71E09D59C /* NotchPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9739BD4434C1DB252ABED7C /* NotchPanelView.swift */; };
 		FB31FFAADC9B596AA111B287 /* FileActionServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49DAEA580C1517BF532E4F80 /* FileActionServiceTests.swift */; };
 		FD9A4F614E2900CF77CF93F7 /* MediaService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD3E3B1A2F82751A13272223 /* MediaService.swift */; };
@@ -45,6 +48,7 @@
 /* Begin PBXFileReference section */
 		0E9C7830566817B3BFCC01EF /* NotchManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchManager.swift; sourceTree = "<group>"; };
 		29CD2ED4A8FAB3394DB8CBE7 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2D41E15C420372B947E6C3A0 /* ExternalHiddenShelfTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalHiddenShelfTests.swift; sourceTree = "<group>"; };
 		366FA2AB253EDD85273FDEC5 /* FileActionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileActionService.swift; sourceTree = "<group>"; };
 		43463D5CAF7CA18F46260691 /* SystemMetricsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemMetricsService.swift; sourceTree = "<group>"; };
 		49D3A0581EB84269064E1EB8 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
@@ -56,6 +60,8 @@
 		6E3B5D1990748095BCD95D16 /* MacMenubar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MacMenubar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		776B4BE8BA5E67F6DFA0ED31 /* ExternalIconStripView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExternalIconStripView.swift; sourceTree = "<group>"; };
 		7A084AF8CD99264D6DB490D8 /* AXActionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AXActionBridge.swift; sourceTree = "<group>"; };
+		87B9BD68E50EF03922350B13 /* DropTrackingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropTrackingView.swift; sourceTree = "<group>"; };
+		93461CC1DB7C8F6136A9A019 /* DragSessionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragSessionModels.swift; sourceTree = "<group>"; };
 		938E06E22537B18BA8D2DEA2 /* NotchActionModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchActionModels.swift; sourceTree = "<group>"; };
 		9D5F8E59D6F35F40D00DD1EB /* NotchDropZoneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchDropZoneView.swift; sourceTree = "<group>"; };
 		A036A50830E9DC55C3B37359 /* ViewModelLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewModelLayoutTests.swift; sourceTree = "<group>"; };
@@ -74,6 +80,7 @@
 		354C8405D54158EFA22DC7B5 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				87B9BD68E50EF03922350B13 /* DropTrackingView.swift */,
 				776B4BE8BA5E67F6DFA0ED31 /* ExternalIconStripView.swift */,
 				9D5F8E59D6F35F40D00DD1EB /* NotchDropZoneView.swift */,
 			);
@@ -105,6 +112,7 @@
 		6201F64CA37BA5246D890359 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				93461CC1DB7C8F6136A9A019 /* DragSessionModels.swift */,
 				BD7BA8426C5B714075D127FC /* ExternalMenuBarItem.swift */,
 				938E06E22537B18BA8D2DEA2 /* NotchActionModels.swift */,
 			);
@@ -141,6 +149,7 @@
 			isa = PBXGroup;
 			children = (
 				4C6F55CACCA850C56665F078 /* DropRoutingTests.swift */,
+				2D41E15C420372B947E6C3A0 /* ExternalHiddenShelfTests.swift */,
 				F55F9C2756FD793F51131B40 /* ExternalIconPolicyTests.swift */,
 				49DAEA580C1517BF532E4F80 /* FileActionServiceTests.swift */,
 				56C6F592B32E5FBC7D6940B7 /* NotchLayoutCalculatorTests.swift */,
@@ -246,6 +255,8 @@
 				07148350E2C208537F3CE43C /* AXMenuBarScanner.swift in Sources */,
 				73A3CA05885D0598C50C1DF4 /* AXPermissionManager.swift in Sources */,
 				C525A45F1D225AC68C298C91 /* App.swift in Sources */,
+				13AFB46751A116CFB3EEB15F /* DragSessionModels.swift in Sources */,
+				E0C6397FFA3D670C4D470C69 /* DropTrackingView.swift in Sources */,
 				81973BB19C8A91F28601C124 /* ExternalIconStripView.swift in Sources */,
 				DDA670E0C2A38F9C387ED876 /* ExternalMenuBarItem.swift in Sources */,
 				90040C5C738BAB9332FA2D3D /* ExternalMenuBarService.swift in Sources */,
@@ -267,6 +278,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				5A2157CA1DCC38447CAE7804 /* DropRoutingTests.swift in Sources */,
+				1A5AF4926E37283CA52DCE24 /* ExternalHiddenShelfTests.swift in Sources */,
 				B9A2A361FCAA7D2C1E2065A7 /* ExternalIconPolicyTests.swift in Sources */,
 				FB31FFAADC9B596AA111B287 /* FileActionServiceTests.swift in Sources */,
 				1F93AD81663D600004D128FD /* NotchLayoutCalculatorTests.swift in Sources */,
@@ -368,6 +380,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MacMenubar/Info.plist;
+				INFOPLIST_KEY_LSUIElement = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -387,6 +400,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MacMenubar/Info.plist;
+				INFOPLIST_KEY_LSUIElement = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

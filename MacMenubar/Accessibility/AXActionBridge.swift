@@ -36,6 +36,10 @@ final class AXActionBridge: AXActionBridging {
         return nil
     }
 
+    func performFallbackClick(frame: CGRect) -> Bool {
+        postSyntheticClick(at: CGPoint(x: frame.midX, y: frame.midY))
+    }
+
     private func postSyntheticClick(at point: CGPoint) -> Bool {
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             return false

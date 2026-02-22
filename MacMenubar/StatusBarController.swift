@@ -62,6 +62,14 @@ final class StatusBarController {
             }
             .store(in: &cancellables)
 
+        viewModel.$externalHiddenShelfItems
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.renderStatusTitle()
+                self?.rebuildMenu()
+            }
+            .store(in: &cancellables)
+
         viewModel.$externalItems
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -77,6 +85,13 @@ final class StatusBarController {
             .store(in: &cancellables)
 
         viewModel.$externalLastOperationMessage
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.rebuildMenu()
+            }
+            .store(in: &cancellables)
+
+        viewModel.$lastReclaimedBytes
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.rebuildMenu()
@@ -143,7 +158,7 @@ final class StatusBarController {
 
     private func renderStatusTitle() {
         guard let button = statusItem.button else { return }
-        let hasOverflow = !viewModel.externalOverflowItems.isEmpty || !viewModel.overflowIcons.isEmpty
+        let hasOverflow = !viewModel.externalOverflowItems.isEmpty || !viewModel.externalHiddenShelfItems.isEmpty || !viewModel.overflowIcons.isEmpty
         let symbolName: String
         if panelController.isShown {
             symbolName = "line.3.horizontal.circle.fill"
@@ -161,7 +176,7 @@ final class StatusBarController {
         button.image = image
         button.title = ""
 
-        let overflowCount = viewModel.externalOverflowItems.count + viewModel.overflowIcons.count
+        let overflowCount = viewModel.externalOverflowItems.count + viewModel.externalHiddenShelfItems.count + viewModel.overflowIcons.count
         if overflowCount > 0 {
             button.toolTip = "MacMenubar · Overflow \(overflowCount)"
         } else {
@@ -227,6 +242,13 @@ final class StatusBarController {
             externalMenu.addItem(lastResult)
         }
 
+        if viewModel.lastReclaimedBytes > 0 {
+            let reclaimed = ByteCountFormatter.string(fromByteCount: viewModel.lastReclaimedBytes, countStyle: .file)
+            let reclaimItem = NSMenuItem(title: "Last reclaimed: \(reclaimed)", action: nil, keyEquivalent: "")
+            reclaimItem.isEnabled = false
+            externalMenu.addItem(reclaimItem)
+        }
+
         let refresh = NSMenuItem(title: "Refresh External Icons", action: #selector(refreshExternalIcons), keyEquivalent: "r")
         refresh.target = self
         refresh.isEnabled = viewModel.mirrorAuthState == .granted
@@ -244,11 +266,49 @@ final class StatusBarController {
 
         externalMenu.addItem(NSMenuItem.separator())
 
-        if viewModel.externalOverflowItems.isEmpty {
-            let empty = NSMenuItem(title: "No external overflow", action: nil, keyEquivalent: "")
+        if viewModel.externalOverflowItems.isEmpty && viewModel.externalHiddenShelfItems.isEmpty {
+            let empty = NSMenuItem(title: "No external overflow or hidden shelf", action: nil, keyEquivalent: "")
             empty.isEnabled = false
             externalMenu.addItem(empty)
         } else {
+            if !viewModel.externalHiddenShelfItems.isEmpty {
+                let shelfHeader = NSMenuItem(title: "Hidden Shelf", action: nil, keyEquivalent: "")
+                shelfHeader.isEnabled = false
+                externalMenu.addItem(shelfHeader)
+
+                for item in viewModel.externalHiddenShelfItems {
+                    let iconMenu = NSMenu(title: item.displayName)
+
+                    let openItem = NSMenuItem(title: "Open \(item.displayName)", action: #selector(performExternalAction(_:)), keyEquivalent: "")
+                    openItem.representedObject = item.id
+                    openItem.target = self
+                    iconMenu.addItem(openItem)
+
+                    let mirrorOnly = NSMenuItem(title: "Mirror only", action: #selector(assignExternalMode(_:)), keyEquivalent: "")
+                    mirrorOnly.representedObject = ExternalModeSelection(itemID: item.id, mode: .mirrorOnly)
+                    mirrorOnly.target = self
+                    iconMenu.addItem(mirrorOnly)
+
+                    let statusTitle = item.shelfState == .staleHidden ? "State: stale-hidden" : "State: hidden"
+                    let statusItem = NSMenuItem(title: statusTitle, action: nil, keyEquivalent: "")
+                    statusItem.isEnabled = false
+                    iconMenu.addItem(statusItem)
+
+                    let shelfPrefix = item.shelfState == .staleHidden ? "[S]" : "[H]"
+                    let root = NSMenuItem(title: "\(shelfPrefix) \(item.displayName)", action: nil, keyEquivalent: "")
+                    externalMenu.setSubmenu(iconMenu, for: root)
+                    externalMenu.addItem(root)
+                }
+
+                externalMenu.addItem(NSMenuItem.separator())
+            }
+
+            if !viewModel.externalOverflowItems.isEmpty {
+                let overflowHeader = NSMenuItem(title: "Overflow", action: nil, keyEquivalent: "")
+                overflowHeader.isEnabled = false
+                externalMenu.addItem(overflowHeader)
+            }
+
             for item in viewModel.externalOverflowItems {
                 let iconMenu = NSMenu(title: item.displayName)
 
@@ -520,9 +580,9 @@ private final class NotchDropZoneController {
     private let viewModel: MenuBarViewModel
 
     private let collapsedWidth: CGFloat = 180
-    private let expandedWidth: CGFloat = 420
+    private let expandedWidth: CGFloat = 460
     private let collapsedHeight: CGFloat = 16
-    private let expandedHeight: CGFloat = 116
+    private let expandedHeight: CGFloat = 176
 
     private(set) var isShown: Bool = false
 

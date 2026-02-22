@@ -131,46 +131,60 @@ final class MenuBarViewModel: ObservableObject {
 
     @Published private(set) var mirrorAuthState: MirrorAuthState = .unknown
     @Published private(set) var externalItems: [ExternalMenuBarItem] = []
+    @Published private(set) var externalHiddenShelfItems: [ExternalMenuBarItem] = []
     @Published private(set) var externalVisibleItems: [ExternalMenuBarItem] = []
     @Published private(set) var externalOverflowItems: [ExternalMenuBarItem] = []
     @Published private(set) var externalPreferences: [String: ExternalIconPreference] = [:]
     @Published private(set) var externalLastOperationMessage: String = ""
     @Published private(set) var externalLastOperationIsWarning: Bool = false
+    @Published private(set) var dragSession: DragSessionContext = .idle
+    @Published private(set) var recommendedDropAction: NotchActionKind?
+    @Published private(set) var targetedDropAction: NotchActionKind?
+    @Published private(set) var lastReclaimedBytes: Int64 = 0
 
     var visibleIcons: [MenuBarIcon] {
         icons.filter(\.isVisible)
     }
 
     var externalHiddenAppliedCount: Int {
-        externalItems.reduce(into: 0) { count, item in
-            if resolvedExternalState(for: item.id) == .hiddenApplied {
+        externalPreferences.values.reduce(into: 0) { count, pref in
+            if pref.mode == .mirrorAndHide && pref.hiddenEnabled {
                 count += 1
             }
         }
     }
 
     var externalDowngradedCount: Int {
-        externalItems.reduce(into: 0) { count, item in
-            if case .downgraded = resolvedExternalState(for: item.id) {
+        externalPreferences.values.reduce(into: 0) { count, pref in
+            if pref.downgradeReason != nil {
                 count += 1
             }
         }
     }
 
     var externalMirrorOnlyCount: Int {
-        max(0, externalItems.count - externalHiddenAppliedCount - externalDowngradedCount)
+        max(0, externalKnownCount - externalHiddenAppliedCount - externalDowngradedCount)
+    }
+
+    var externalHiddenShelfCount: Int {
+        externalHiddenShelfItems.count
     }
 
     var externalHideCapableCount: Int {
-        max(0, externalItems.count - externalDowngradedCount)
+        max(0, externalKnownCount - externalDowngradedCount)
     }
 
     var externalStatusSummary: String {
-        "Hidden \(externalHiddenAppliedCount) · Mirror \(externalMirrorOnlyCount) · Downgraded \(externalDowngradedCount)"
+        "Visible \(externalVisibleItems.count) · HiddenShelf \(externalHiddenShelfCount) · Downgraded \(externalDowngradedCount)"
     }
 
     var externalHideStatsSummary: String {
         "Supported Hide \(externalHideCapableCount) · Applied \(externalHiddenAppliedCount) · Downgraded \(externalDowngradedCount)"
+    }
+
+    private var externalKnownCount: Int {
+        let combined = externalItems.map(\.id) + externalHiddenShelfItems.map(\.id)
+        return Set(combined).count
     }
 
     var canUndoLastDangerousAction: Bool {
@@ -290,39 +304,100 @@ final class MenuBarViewModel: ObservableObject {
 
     func setDropZoneHover(_ hovering: Bool) {
         isDropZoneHovered = hovering
-        if hovering, notchDropState == .idle {
-            notchDropState = .hovering
+        if hovering {
+            if dragSession.isFileDrag {
+                if let targetedDropAction {
+                    notchDropState = .targeting(targetedDropAction)
+                } else {
+                    notchDropState = .predrag
+                }
+            } else if notchDropState == .idle {
+                notchDropState = .hovering
+            }
+            return
         }
-        if !hovering, notchDropState == .hovering, !canUndoLastDangerousAction {
+
+        if !dragSession.isFileDrag, !canUndoLastDangerousAction {
             notchDropState = .idle
             notchActionMessage = ""
             notchActionIsError = false
         }
     }
 
-    func handleDroppedItems(_ urls: [URL]) {
+    func beginDragSession(with urls: [URL]) {
+        dragSession = DragSessionContext(
+            isFileDrag: true,
+            hoveredAction: nil,
+            enteredAt: .now
+        )
+
+        let classification = fileActionService.classify(urls: urls)
+        droppedFiles = classification.descriptors
+        dropContentKind = classification.kind
+        recommendedDropAction = classification.recommendedAction
+        targetedDropAction = nil
+        refreshDropCapabilities()
+        notchDropState = .predrag
+    }
+
+    func updateDragTarget(_ action: NotchActionKind?) {
+        guard dragSession.isFileDrag else { return }
+
+        targetedDropAction = action
+        dragSession.hoveredAction = action
+
+        if let action {
+            notchDropState = .targeting(action)
+        } else {
+            notchDropState = .predrag
+        }
+    }
+
+    func endDragSession() {
+        dragSession = .idle
+        targetedDropAction = nil
+        recommendedDropAction = nil
+        switch notchDropState {
+        case .predrag, .targeting(_), .hovering:
+            if !isDropZoneHovered, !canUndoLastDangerousAction {
+                notchDropState = .idle
+                notchActionMessage = ""
+                notchActionIsError = false
+            } else if isDropZoneHovered {
+                notchDropState = .hovering
+            }
+        default:
+            break
+        }
+    }
+
+    func handleDroppedItems(_ urls: [URL], preferredAction: NotchActionKind? = nil) {
         guard isNotchDropZoneEnabled else { return }
 
         let classification = fileActionService.classify(urls: urls)
         droppedFiles = classification.descriptors
         dropContentKind = classification.kind
+        recommendedDropAction = classification.recommendedAction
         refreshDropCapabilities()
 
         guard !droppedFiles.isEmpty else {
             notchDropState = .failure
             setNotchActionMessage("No valid files were dropped.", error: true)
+            endDragSession()
             return
         }
 
         notchDropState = .hovering
 
+        let selectedAction = preferredAction ?? targetedDropAction ?? classification.recommendedAction
         if instantExecutionEnabled,
-           let defaultAction = classification.defaultAction,
-           availableDropActions.contains(defaultAction) {
-            performNotchAction(defaultAction, files: droppedFiles)
+           let selectedAction,
+           availableDropActions.contains(selectedAction) {
+            performNotchAction(selectedAction, files: droppedFiles)
         } else {
             setNotchActionMessage("Choose an action to process \(droppedFiles.count) file(s).", error: false)
         }
+        endDragSession()
     }
 
     func performNotchAction(_ action: NotchActionKind, files: [DroppedFileDescriptor]) {
@@ -345,6 +420,7 @@ final class MenuBarViewModel: ObservableObject {
             let result = try fileActionService.execute(action: action, inputs: inputs, outputPolicy: .sourceDirectory)
             notchDropState = .success
             setNotchActionMessage(result.message, error: false)
+            lastReclaimedBytes = result.spaceDeltaBytes
 
             lastUndoToken = result.undoToken
             if let undoToken = result.undoToken {
@@ -426,7 +502,9 @@ final class MenuBarViewModel: ObservableObject {
         persistExternalPreferences()
         recalculateExternalLayout()
 
-        let displayName = externalItems.first(where: { $0.id == itemID })?.displayName ?? itemID
+        let displayName = externalItems.first(where: { $0.id == itemID })?.displayName
+            ?? externalHiddenShelfItems.first(where: { $0.id == itemID })?.displayName
+            ?? itemID
         if let reason = result.downgradeReason {
             setExternalStatusMessage("Hide unsupported for \(displayName): \(reason.rawValue). Fallback to Mirror only.", warning: true)
         } else if result.effectiveMode == .mirrorAndHide {
@@ -452,6 +530,7 @@ final class MenuBarViewModel: ObservableObject {
         mirrorAuthState = externalProvider.currentAuthState()
         guard mirrorAuthState == .granted else {
             externalItems = []
+            externalHiddenShelfItems = []
             externalVisibleItems = []
             externalOverflowItems = []
             setExternalStatusMessage("Accessibility required. Grant permission to mirror or hide icons.", warning: true)
@@ -461,12 +540,13 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     func performExternalItemPrimaryAction(itemID: String) {
+        let displayName = externalItems.first(where: { $0.id == itemID })?.displayName
+            ?? externalHiddenShelfItems.first(where: { $0.id == itemID })?.displayName
+            ?? itemID
         guard externalProvider.performPrimaryAction(for: itemID) else {
-            let displayName = externalItems.first(where: { $0.id == itemID })?.displayName ?? itemID
             setExternalStatusMessage("Could not trigger \(displayName). Open it from original menu bar.", warning: true)
             return
         }
-        let displayName = externalItems.first(where: { $0.id == itemID })?.displayName ?? itemID
         setExternalStatusMessage("Opened \(displayName).", warning: false)
         if let index = externalItems.firstIndex(where: { $0.id == itemID }) {
             externalItems[index].lastInteractionAt = .now
@@ -542,6 +622,13 @@ final class MenuBarViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] items in
                 self?.updateExternalItems(items)
+            }
+            .store(in: &cancellables)
+
+        externalProvider.hiddenShelfPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] items in
+                self?.externalHiddenShelfItems = items
             }
             .store(in: &cancellables)
     }

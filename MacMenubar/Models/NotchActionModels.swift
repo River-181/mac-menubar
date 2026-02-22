@@ -4,6 +4,10 @@ enum NotchActionKind: String, Codable, CaseIterable, Identifiable {
     case imageToPDF
     case pdfToImages
     case compressZip
+    case extractZip
+    case optimizeImages
+    case optimizePDFKeepText
+    case resizeImages
     case sendToWorkbench
     case moveToTrash
 
@@ -17,6 +21,14 @@ enum NotchActionKind: String, Codable, CaseIterable, Identifiable {
             return "PDF -> Images"
         case .compressZip:
             return "Compress (.zip)"
+        case .extractZip:
+            return "Extract ZIP"
+        case .optimizeImages:
+            return "Optimize Images"
+        case .optimizePDFKeepText:
+            return "Optimize PDF (Keep Text)"
+        case .resizeImages:
+            return "Resize Images"
         case .sendToWorkbench:
             return "Send to Workbench"
         case .moveToTrash:
@@ -32,6 +44,14 @@ enum NotchActionKind: String, Codable, CaseIterable, Identifiable {
             return "doc.on.doc"
         case .compressZip:
             return "archivebox"
+        case .extractZip:
+            return "tray.and.arrow.down"
+        case .optimizeImages:
+            return "wand.and.stars"
+        case .optimizePDFKeepText:
+            return "doc.text.magnifyingglass"
+        case .resizeImages:
+            return "arrow.up.left.and.arrow.down.right"
         case .sendToWorkbench:
             return "shippingbox"
         case .moveToTrash:
@@ -42,7 +62,9 @@ enum NotchActionKind: String, Codable, CaseIterable, Identifiable {
 
 enum NotchDropState: Equatable {
     case idle
+    case predrag
     case hovering
+    case targeting(NotchActionKind)
     case processing
     case success
     case failure
@@ -51,12 +73,19 @@ enum NotchDropState: Equatable {
 enum DropContentKind: String, Equatable {
     case images
     case pdfs
+    case zipArchives
     case mixed
     case unsupported
 }
 
 enum FileOutputPolicy: Equatable {
     case sourceDirectory
+}
+
+enum DangerousOperationKind: String, Codable, Equatable {
+    case moveToTrash
+    case compressAndTrashOriginals
+    case replaceWithOptimized
 }
 
 struct DroppedFileDescriptor: Identifiable, Equatable {
@@ -67,10 +96,28 @@ struct DroppedFileDescriptor: Identifiable, Equatable {
     let fileSize: Int64
 }
 
+struct UndoReplacement: Equatable {
+    let sourceURL: URL
+    let generatedURL: URL
+}
+
 struct UndoToken: Equatable {
+    let operationKind: DangerousOperationKind
     let sourceURLs: [URL]
     let destinationURLs: [URL]
+    let replacements: [UndoReplacement]
     let expiresAt: Date
+}
+
+struct StorageDelta: Equatable {
+    let beforeBytes: Int64
+    let afterBytes: Int64
+
+    var reclaimedBytes: Int64 {
+        max(0, beforeBytes - afterBytes)
+    }
+
+    static let zero = StorageDelta(beforeBytes: 0, afterBytes: 0)
 }
 
 struct ActionExecutionResult: Equatable {
@@ -78,12 +125,15 @@ struct ActionExecutionResult: Equatable {
     let outputs: [URL]
     let message: String
     let undoToken: UndoToken?
+    let spaceDeltaBytes: Int64
+    let warnings: [String]
 }
 
 struct DropClassification: Equatable {
     let kind: DropContentKind
     let descriptors: [DroppedFileDescriptor]
-    let defaultAction: NotchActionKind?
+    let recommendedAction: NotchActionKind?
+    let secondaryActions: [NotchActionKind]
 }
 
 protocol FileActionExecuting: AnyObject {

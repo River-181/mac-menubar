@@ -69,6 +69,11 @@ struct SettingsView: View {
                     Text("Undo timeout: 8s")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if viewModel.lastReclaimedBytes > 0 {
+                        Text("Last reclaimed: \(ByteCountFormatter.string(fromByteCount: viewModel.lastReclaimedBytes, countStyle: .file))")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 8) {
                         Button("Open Workbench Folder") {
                             viewModel.openWorkbenchFolder()
@@ -103,6 +108,9 @@ struct SettingsView: View {
                         Text(viewModel.externalHideStatsSummary)
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
+                        Text("Hidden Shelf \(viewModel.externalHiddenShelfItems.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
 
                     HStack(spacing: 8) {
@@ -135,14 +143,14 @@ struct SettingsView: View {
                         }
                     }
 
-                    if viewModel.externalItems.isEmpty {
+                    if listedExternalItems.isEmpty {
                         Text(viewModel.mirrorAuthState == .granted ? "No external menu icons detected." : "Grant Accessibility to mirror external icons.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         ScrollView {
                             VStack(alignment: .leading, spacing: 8) {
-                                ForEach(viewModel.externalItems) { item in
+                                ForEach(listedExternalItems) { item in
                                     ExternalIconPreferenceRow(viewModel: viewModel, item: item)
                                 }
                             }
@@ -188,6 +196,7 @@ struct SettingsView: View {
                     Text("Spacing: \(String(format: "%.1f", viewModel.layoutSnapshot.spacing))")
                     Text("External Visible: \(viewModel.externalVisibleItems.count)")
                     Text("External Overflow: \(viewModel.externalOverflowItems.count)")
+                    Text("External Hidden Shelf: \(viewModel.externalHiddenShelfItems.count)")
                 }
                 .font(.system(.caption, design: .monospaced))
                 .padding(.top, 6)
@@ -217,6 +226,15 @@ struct SettingsView: View {
             return .red
         case .granted:
             return .green
+        }
+    }
+
+    private var listedExternalItems: [ExternalMenuBarItem] {
+        var items = viewModel.externalItems
+        let existingIDs = Set(items.map(\.id))
+        items.append(contentsOf: viewModel.externalHiddenShelfItems.filter { !existingIDs.contains($0.id) })
+        return items.sorted { lhs, rhs in
+            lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
     }
 }
@@ -261,22 +279,29 @@ private struct ExternalIconPreferenceRow: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        switch viewModel.resolvedExternalState(for: item.id) {
-        case .hiddenApplied:
-            Text("Hidden Applied")
-                .font(.caption2)
-                .foregroundStyle(.green)
-                .lineLimit(1)
-        case .mirrorOnly:
-            Text("Mirror Only")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        case .downgraded(let reason):
-            Text("Downgraded: \(reason.rawValue)")
+        if item.shelfState == .staleHidden {
+            Text("Stale Hidden")
                 .font(.caption2)
                 .foregroundStyle(.orange)
                 .lineLimit(1)
+        } else {
+            switch viewModel.resolvedExternalState(for: item.id) {
+            case .hiddenApplied:
+                Text("Hidden Applied")
+                    .font(.caption2)
+                    .foregroundStyle(.green)
+                    .lineLimit(1)
+            case .mirrorOnly:
+                Text("Mirror Only")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            case .downgraded(let reason):
+                Text("Downgraded: \(reason.rawValue)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(1)
+            }
         }
     }
 }

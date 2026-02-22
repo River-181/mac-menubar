@@ -128,7 +128,12 @@ private final class MockExternalProvider: ExternalMenuBarProviding {
         subject.eraseToAnyPublisher()
     }
 
+    var hiddenShelfPublisher: AnyPublisher<[ExternalMenuBarItem], Never> {
+        hiddenSubject.eraseToAnyPublisher()
+    }
+
     private let subject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
+    private let hiddenSubject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
 
     func start() {}
     func stop() {}
@@ -136,6 +141,10 @@ private final class MockExternalProvider: ExternalMenuBarProviding {
 
     func setVisibilityMode(_ mode: ExternalItemVisibilityMode, for itemID: String) -> ExternalModeUpdateResult {
         ExternalModeUpdateResult(effectiveMode: mode, downgradeReason: nil)
+    }
+
+    func revealHiddenItem(_ itemID: String) -> Bool {
+        true
     }
 
     func performPrimaryAction(for itemID: String) -> Bool {

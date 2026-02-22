@@ -1,9 +1,9 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct NotchDropZoneView: View {
     @ObservedObject var viewModel: MenuBarViewModel
-    @State private var isDropTargeted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var actionFrames: [NotchActionKind: CGRect] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -30,20 +30,44 @@ struct NotchDropZoneView: View {
                 )
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .animation(.spring(response: 0.28, dampingFraction: 0.84), value: isExpanded)
+        .coordinateSpace(name: "drop-zone")
+        .animation(expansionAnimation, value: isExpanded)
         .onHover { hovering in
             viewModel.setDropZoneHover(hovering)
         }
-        .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted, perform: handleDrop(providers:))
+        .background(dropTrackingOverlay)
+        .onPreferenceChange(ActionFramePreferenceKey.self) { actionFrames = $0 }
+    }
+
+    private var dropTrackingOverlay: some View {
+        DropTrackingView(
+            onDragEntered: { urls in
+                viewModel.setDropZoneHover(true)
+                viewModel.beginDragSession(with: urls)
+            },
+            onDragUpdated: { point in
+                viewModel.updateDragTarget(action(at: point))
+            },
+            onDragExited: {
+                viewModel.setDropZoneHover(false)
+                viewModel.endDragSession()
+            },
+            onPerformDrop: { urls, point in
+                let targeted = action(at: point)
+                viewModel.handleDroppedItems(urls, preferredAction: targeted)
+            }
+        )
+        .allowsHitTesting(true)
+        .opacity(0.01)
     }
 
     private var isExpanded: Bool {
-        viewModel.isDropZoneHovered || isDropTargeted || viewModel.notchDropState != .idle
+        viewModel.isDropZoneHovered || viewModel.dragSession.isFileDrag || viewModel.notchDropState != .idle
     }
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+            LazyVGrid(columns: actionColumns, spacing: 8) {
                 ForEach(NotchActionKind.allCases) { action in
                     actionChip(action)
                 }
@@ -64,6 +88,7 @@ struct NotchDropZoneView: View {
                         .font(.caption.weight(.semibold))
                     }
                 }
+                .transition(.opacity.combined(with: .move(edge: .top)))
             } else {
                 Text(helpText)
                     .font(.caption)
@@ -74,19 +99,24 @@ struct NotchDropZoneView: View {
     }
 
     private var helpText: String {
-        if isDropTargeted {
-            return "Drop files to run the recommended action instantly."
-        }
-        if viewModel.notchDropState == .processing {
+        if case .processing = viewModel.notchDropState {
             return "Processing files..."
         }
-        return "Hover and drop files here: convert, compress, workbench, or trash."
+        if let action = viewModel.targetedDropAction {
+            return "Drop to run \(action.displayName)."
+        }
+        if let action = viewModel.recommendedDropAction, viewModel.dragSession.isFileDrag {
+            return "Recommended: \(action.displayName)."
+        }
+        return "Hover and drop files here: optimize, convert, compress, collect, or trash."
     }
 
     @ViewBuilder
     private func actionChip(_ action: NotchActionKind) -> some View {
         let isAvailable = viewModel.availableDropActions.contains(action)
         let isProcessing = viewModel.notchDropState == .processing
+        let isTargeted = viewModel.targetedDropAction == action
+        let isRecommended = viewModel.recommendedDropAction == action && viewModel.targetedDropAction == nil && viewModel.dragSession.isFileDrag
 
         Button {
             viewModel.performNotchAction(action, files: viewModel.droppedFiles)
@@ -96,15 +126,38 @@ struct NotchDropZoneView: View {
                     .font(.caption.weight(.semibold))
                 Text(shortLabel(for: action))
                     .font(.caption2)
+                    .lineLimit(1)
             }
-            .frame(width: 56, height: 42)
+            .frame(width: 64, height: 44)
         }
         .buttonStyle(.plain)
         .foregroundStyle(isAvailable ? .primary : .secondary)
         .opacity(isAvailable ? 1 : 0.45)
-        .background(.primary.opacity(isAvailable ? 0.10 : 0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(chipBackground(isAvailable: isAvailable, isTargeted: isTargeted, isRecommended: isRecommended))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isTargeted ? Color.accentColor.opacity(0.95) : .clear, lineWidth: 1.4)
+        )
         .disabled(!isAvailable || isProcessing)
         .help(action.displayName)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: ActionFramePreferenceKey.self,
+                        value: [action: proxy.frame(in: .named("drop-zone"))]
+                    )
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func chipBackground(isAvailable: Bool, isTargeted: Bool, isRecommended: Bool) -> some View {
+        let baseOpacity: CGFloat = isAvailable ? 0.09 : 0.04
+        let highlightOpacity: CGFloat = isTargeted ? 0.18 : (isRecommended ? 0.12 : baseOpacity)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(.primary.opacity(highlightOpacity))
+            .animation(reduceMotion ? .easeOut(duration: 0.12) : .easeOut(duration: 0.14), value: isTargeted)
     }
 
     private func shortLabel(for action: NotchActionKind) -> String {
@@ -112,54 +165,37 @@ struct NotchDropZoneView: View {
         case .imageToPDF: return "Img→PDF"
         case .pdfToImages: return "PDF→Img"
         case .compressZip: return "Zip"
+        case .extractZip: return "Unzip"
+        case .optimizeImages: return "Opt Img"
+        case .optimizePDFKeepText: return "Opt PDF"
+        case .resizeImages: return "Resize"
         case .sendToWorkbench: return "Desk"
         case .moveToTrash: return "Trash"
         }
     }
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        loadFileURLs(from: providers) { urls in
-            viewModel.handleDroppedItems(urls)
-        }
-        return true
+    private func action(at point: CGPoint) -> NotchActionKind? {
+        actionFrames.first { pair in
+            pair.value.contains(point) && viewModel.availableDropActions.contains(pair.key)
+        }?.key
     }
 
-    private func loadFileURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
-        let group = DispatchGroup()
-        let collector = URLCollector()
+    private var actionColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(minimum: 56, maximum: 72), spacing: 8), count: 5)
+    }
 
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-
-                var resolved: URL?
-                if let url = item as? URL {
-                    resolved = url
-                } else if let data = item as? Data {
-                    resolved = NSURL(absoluteURLWithDataRepresentation: data, relativeTo: nil) as URL?
-                } else if let string = item as? String {
-                    resolved = URL(string: string)
-                }
-
-                guard let resolved else { return }
-                collector.append(resolved)
-            }
+    private var expansionAnimation: Animation {
+        if reduceMotion {
+            return .easeOut(duration: 0.12)
         }
-
-        group.notify(queue: .main) {
-            completion(Array(Set(collector.values)).sorted(by: { $0.path < $1.path }))
-        }
+        return .interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
     }
 }
 
-private final class URLCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private(set) var values: [URL] = []
+private struct ActionFramePreferenceKey: PreferenceKey {
+    static let defaultValue: [NotchActionKind: CGRect] = [:]
 
-    func append(_ url: URL) {
-        lock.lock()
-        values.append(url)
-        lock.unlock()
+    static func reduce(value: inout [NotchActionKind: CGRect], nextValue: () -> [NotchActionKind: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }

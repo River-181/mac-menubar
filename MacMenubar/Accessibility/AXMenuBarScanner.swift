@@ -74,7 +74,8 @@ final class AXMenuBarScanner {
                     supportsPressAction: supportsPressAction,
                     iconPNGData: iconData,
                     lastSeenAt: now,
-                    lastInteractionAt: .distantPast
+                    lastInteractionAt: .distantPast,
+                    shelfState: .none
                 )
                 scanned.append(AXScannedMenuBarItem(item: model, element: child))
             }
