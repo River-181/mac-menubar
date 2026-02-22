@@ -3,7 +3,7 @@ import SwiftUI
 
 struct DropTrackingView: NSViewRepresentable {
     var onDragEntered: ([URL]) -> Void
-    var onDragUpdated: (CGPoint) -> Void
+    var onDragUpdated: (CGPoint, DragDynamics) -> Void
     var onDragExited: () -> Void
     var onPerformDrop: ([URL], CGPoint) -> Void
 
@@ -26,9 +26,16 @@ struct DropTrackingView: NSViewRepresentable {
 
 final class DropTrackingNSView: NSView {
     var onDragEntered: (([URL]) -> Void)?
-    var onDragUpdated: ((CGPoint) -> Void)?
+    var onDragUpdated: ((CGPoint, DragDynamics) -> Void)?
     var onDragExited: (() -> Void)?
     var onPerformDrop: (([URL], CGPoint) -> Void)?
+    private var currentDragURLs: [URL] = []
+    private var hasActiveFileDrag = false
+    private var lastReportedPoint: CGPoint = .zero
+    private var lastReportedTime: CFTimeInterval = 0
+    private var lastVelocity: CGPoint = .zero
+    private let minimumUpdateInterval: CFTimeInterval = 1.0 / 30.0
+    private let minimumPointDelta: CGFloat = 1.5
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -43,30 +50,72 @@ final class DropTrackingNSView: NSView {
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let urls = fileURLs(from: sender)
         guard !urls.isEmpty else { return [] }
+        currentDragURLs = urls
+        hasActiveFileDrag = true
         onDragEntered?(urls)
-        onDragUpdated?(localPoint(from: sender))
+        let point = localPoint(from: sender)
+        lastReportedPoint = point
+        lastReportedTime = CACurrentMediaTime()
+        lastVelocity = .zero
+        onDragUpdated?(
+            point,
+            DragDynamics(
+                velocity: .zero,
+                acceleration: .zero,
+                lastPoint: point,
+                lastTimestamp: lastReportedTime
+            )
+        )
         return .copy
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let urls = fileURLs(from: sender)
-        guard !urls.isEmpty else { return [] }
-        onDragUpdated?(localPoint(from: sender))
+        guard hasActiveFileDrag else { return [] }
+        let point = localPoint(from: sender)
+        let now = CACurrentMediaTime()
+        let movedEnough = abs(point.x - lastReportedPoint.x) >= minimumPointDelta || abs(point.y - lastReportedPoint.y) >= minimumPointDelta
+        let elapsedEnough = now - lastReportedTime >= minimumUpdateInterval
+        if movedEnough && elapsedEnough {
+            let dt = max(0.0001, now - lastReportedTime)
+            let velocity = CGPoint(
+                x: (point.x - lastReportedPoint.x) / dt,
+                y: (point.y - lastReportedPoint.y) / dt
+            )
+            let acceleration = CGPoint(
+                x: (velocity.x - lastVelocity.x) / dt,
+                y: (velocity.y - lastVelocity.y) / dt
+            )
+            lastVelocity = velocity
+            lastReportedPoint = point
+            lastReportedTime = now
+            onDragUpdated?(
+                point,
+                DragDynamics(
+                    velocity: velocity,
+                    acceleration: acceleration,
+                    lastPoint: point,
+                    lastTimestamp: now
+                )
+            )
+        }
         return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        resetDragState()
         onDragExited?()
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        !fileURLs(from: sender).isEmpty
+        hasActiveFileDrag || !fileURLs(from: sender).isEmpty
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let urls = fileURLs(from: sender)
+        let urls = currentDragURLs.isEmpty ? fileURLs(from: sender) : currentDragURLs
         guard !urls.isEmpty else { return false }
-        onPerformDrop?(urls, localPoint(from: sender))
+        let point = localPoint(from: sender)
+        onPerformDrop?(urls, point)
+        resetDragState()
         return true
     }
 
@@ -78,5 +127,13 @@ final class DropTrackingNSView: NSView {
     private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
         sender.draggingPasteboard.readObjects(forClasses: [NSURL.self])?
             .compactMap { $0 as? URL } ?? []
+    }
+
+    private func resetDragState() {
+        hasActiveFileDrag = false
+        currentDragURLs = []
+        lastVelocity = .zero
+        lastReportedPoint = .zero
+        lastReportedTime = 0
     }
 }

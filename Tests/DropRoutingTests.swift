@@ -59,9 +59,15 @@ final class DropRoutingTests: XCTestCase {
         )
 
         viewModel.handleDroppedItems([imageURL])
+        XCTAssertEqual(viewModel.notchDropState, .dropCommit(.optimizeImages))
 
-        XCTAssertEqual(fileActionProvider.lastExecuteAction, .optimizeImages)
-        XCTAssertEqual(viewModel.notchDropState, .success)
+        let expectation = expectation(description: "recommended action executes")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            XCTAssertEqual(self.fileActionProvider.lastExecuteAction, .optimizeImages)
+            XCTAssertEqual(viewModel.notchDropState, .success)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1.0)
     }
 
     @MainActor
@@ -92,12 +98,18 @@ final class DropRoutingTests: XCTestCase {
         )
 
         viewModel.handleDroppedItems([imageURL], preferredAction: .imageToPDF)
+        XCTAssertEqual(viewModel.notchDropState, .dropCommit(.imageToPDF))
 
-        XCTAssertEqual(fileActionProvider.lastExecuteAction, .imageToPDF)
+        let expectation = expectation(description: "preferred action executes")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            XCTAssertEqual(self.fileActionProvider.lastExecuteAction, .imageToPDF)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1.0)
     }
 
     @MainActor
-    func testDragSessionTransitionsToTargetingState() {
+    func testDragSessionTransitionsThroughMagnetAndDropCommit() {
         let externalProvider = DropExternalProvider()
         let imageURL = URL(fileURLWithPath: "/tmp/sample.png")
         fileActionProvider.classification = DropClassification(
@@ -124,13 +136,63 @@ final class DropRoutingTests: XCTestCase {
         )
 
         viewModel.beginDragSession(with: [imageURL])
-        XCTAssertEqual(viewModel.notchDropState, .predrag)
+        XCTAssertEqual(viewModel.notchDropState, .preheat)
 
         viewModel.updateDragTarget(.optimizeImages)
-        XCTAssertEqual(viewModel.notchDropState, .targeting(.optimizeImages))
+        XCTAssertEqual(viewModel.notchDropState, .magnetFocus(.optimizeImages))
 
+        viewModel.handleDroppedItems([imageURL], preferredAction: .optimizeImages)
+        XCTAssertEqual(viewModel.notchDropState, .dropCommit(.optimizeImages))
+
+        let expectation = expectation(description: "drop commit completes")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            XCTAssertEqual(viewModel.notchDropState, .success)
+            XCTAssertFalse(viewModel.dragSession.isFileDrag)
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 1.0)
+    }
+
+    @MainActor
+    func testFastDragReducesMagnetSnapStrength() {
+        let externalProvider = DropExternalProvider()
+        let imageURL = URL(fileURLWithPath: "/tmp/sample.png")
+        fileActionProvider.classification = DropClassification(
+            kind: .images,
+            descriptors: [
+                DroppedFileDescriptor(
+                    id: imageURL.path,
+                    url: imageURL,
+                    utType: "public.png",
+                    fileName: "sample.png",
+                    fileSize: 0
+                )
+            ],
+            recommendedAction: .optimizeImages,
+            secondaryActions: []
+        )
+
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            fileActionService: fileActionProvider,
+            defaults: defaults
+        )
+
+        viewModel.beginDragSession(with: [imageURL])
+        viewModel.updateDragDynamics(
+            DragDynamics(
+                velocity: CGPoint(x: 1800, y: 0),
+                acceleration: CGPoint(x: 0, y: 0),
+                lastPoint: .zero,
+                lastTimestamp: 1
+            )
+        )
+
+        XCTAssertLessThan(viewModel.magnetSnapStrength, 0.6)
         viewModel.endDragSession()
-        XCTAssertFalse(viewModel.dragSession.isFileDrag)
+        XCTAssertEqual(viewModel.magnetSnapStrength, 1, accuracy: 0.001)
     }
 
     func testHubAnchorUsesVisibleMidXOnNonNotchDisplay() {

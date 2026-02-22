@@ -19,6 +19,9 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
     private let actionBridge: AXActionBridging
     private let staleTTL: TimeInterval
     private let hiddenShelfStaleThreshold: TimeInterval
+    private let pollingInterval: TimeInterval
+    private let pollingTolerance: TimeInterval
+    private let iconCaptureIntervalTicks: Int
 
     private var timer: Timer?
     private var cachedItems: [String: ExternalMenuBarItem] = [:]
@@ -26,19 +29,27 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
     private var elementByID: [String: AXUIElement] = [:]
     private var modeByID: [String: ExternalItemVisibilityMode] = [:]
     private var hiddenSinceByID: [String: Date] = [:]
+    private var pollTick: Int = 0
+    private var forceIconCaptureOnNextRefresh: Bool = true
 
     init(
         permissionManager: AXPermissionProviding = AXPermissionManager(),
         scanner: AXMenuBarScanner = AXMenuBarScanner(),
         actionBridge: AXActionBridging = AXActionBridge(),
         staleTTL: TimeInterval = 3,
-        hiddenShelfStaleThreshold: TimeInterval = 12
+        hiddenShelfStaleThreshold: TimeInterval = 12,
+        pollingInterval: TimeInterval = 1.5,
+        pollingTolerance: TimeInterval = 0.5,
+        iconCaptureIntervalTicks: Int = 8
     ) {
         self.permissionManager = permissionManager
         self.scanner = scanner
         self.actionBridge = actionBridge
         self.staleTTL = staleTTL
         self.hiddenShelfStaleThreshold = hiddenShelfStaleThreshold
+        self.pollingInterval = pollingInterval
+        self.pollingTolerance = pollingTolerance
+        self.iconCaptureIntervalTicks = max(2, iconCaptureIntervalTicks)
     }
 
     func start() {
@@ -54,12 +65,12 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
         }
 
         refresh()
-        let timer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: pollingInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refresh()
+                self?.pollRefresh()
             }
         }
-        timer.tolerance = 0.25
+        timer.tolerance = pollingTolerance
         self.timer = timer
     }
 
@@ -69,33 +80,48 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
     }
 
     func refresh() {
+        pollTick += 1
+        performRefresh(allowIconCapture: shouldCaptureIconsThisRefresh())
+    }
+
+    private func pollRefresh() {
+        pollTick += 1
+        performRefresh(allowIconCapture: shouldCaptureIconsThisRefresh())
+    }
+
+    private func performRefresh(allowIconCapture: Bool) {
         guard currentAuthState() == .granted else {
             cachedItems.removeAll()
             lastKnownItems.removeAll()
             elementByID.removeAll()
             modeByID.removeAll()
             hiddenSinceByID.removeAll()
+            pollTick = 0
             subject.send([])
             hiddenShelfSubject.send([])
             return
         }
 
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
-        let scanned = scanner.scan(excludingBundleID: ownBundleID)
+        let scanned = scanner.scan(excludingBundleID: ownBundleID, captureIcons: allowIconCapture)
         let now = Date()
         let scannedIDs = Set(scanned.map { $0.item.id })
 
         for entry in scanned {
+            let previouslyKnown = cachedItems[entry.item.id] != nil
             var item = entry.item
             item.isVisibleInSystemBar = true
             item.shelfState = .none
+            if let previousItem = lastKnownItems[item.id], item.iconPNGData == nil {
+                item.iconPNGData = previousItem.iconPNGData
+            }
 
             cachedItems[item.id] = item
             lastKnownItems[item.id] = item
             elementByID[item.id] = entry.element
 
-            // Re-apply hide mode to reduce temporary reappearance.
-            if modeByID[item.id] == .mirrorAndHide {
+            // Re-apply hide only when item re-appears after previously disappearing.
+            if modeByID[item.id] == .mirrorAndHide && !previouslyKnown {
                 _ = actionBridge.setHidden(true, for: entry.element)
             }
         }
@@ -112,7 +138,9 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
         let sortedVisible = cachedItems.values.sorted { lhs, rhs in
             lhs.frameInScreen.minX > rhs.frameInScreen.minX
         }
-        subject.send(sortedVisible)
+        if shouldPublishChanges(from: subject.value, to: sortedVisible) {
+            subject.send(sortedVisible)
+        }
         publishHiddenShelf(scannedIDs: scannedIDs, now: now)
     }
 
@@ -143,6 +171,7 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
 
             modeByID[itemID] = .mirrorAndHide
             hiddenSinceByID[itemID] = .now
+            forceIconCaptureOnNextRefresh = true
             publishHiddenShelf(scannedIDs: Set(cachedItems.keys), now: .now)
             return ExternalModeUpdateResult(effectiveMode: .mirrorAndHide, downgradeReason: nil)
         }
@@ -189,6 +218,7 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
     func requestPermission() -> MirrorAuthState {
         let state = permissionManager.requestPermission()
         if state == .granted {
+            forceIconCaptureOnNextRefresh = true
             start()
         } else {
             stop()
@@ -225,6 +255,35 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
         let sorted = shelf.sorted { lhs, rhs in
             lhs.frameInScreen.minX > rhs.frameInScreen.minX
         }
-        hiddenShelfSubject.send(sorted)
+        if shouldPublishChanges(from: hiddenShelfSubject.value, to: sorted) {
+            hiddenShelfSubject.send(sorted)
+        }
+    }
+
+    private func shouldCaptureIconsThisRefresh() -> Bool {
+        if forceIconCaptureOnNextRefresh {
+            forceIconCaptureOnNextRefresh = false
+            return true
+        }
+        return pollTick % iconCaptureIntervalTicks == 0
+    }
+
+    private func shouldPublishChanges(from current: [ExternalMenuBarItem], to next: [ExternalMenuBarItem]) -> Bool {
+        guard current.count == next.count else { return true }
+        guard !current.isEmpty else { return false }
+
+        for (lhs, rhs) in zip(current, next) {
+            if lhs.id != rhs.id { return true }
+            if lhs.ownerBundleID != rhs.ownerBundleID { return true }
+            if lhs.displayName != rhs.displayName { return true }
+            if lhs.frameInScreen != rhs.frameInScreen { return true }
+            if lhs.isVisibleInSystemBar != rhs.isVisibleInSystemBar { return true }
+            if lhs.supportsPressAction != rhs.supportsPressAction { return true }
+            if lhs.shelfState != rhs.shelfState { return true }
+            if lhs.iconPNGData != rhs.iconPNGData { return true }
+        }
+
+        // Ignore timestamp-only updates to reduce unnecessary UI refresh churn.
+        return false
     }
 }

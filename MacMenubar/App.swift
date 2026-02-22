@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct SettingsView: View {
     @ObservedObject var viewModel: MenuBarViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -62,6 +63,36 @@ struct SettingsView: View {
                 .padding(.top, 6)
             }
 
+            GroupBox("Menu Bar Compaction") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Default Policy", selection: Binding(
+                        get: { viewModel.notchDefaultPolicy },
+                        set: { viewModel.setNotchDefaultPolicy($0) }
+                    )) {
+                        ForEach(NotchDefaultPolicy.allCases) { policy in
+                            Text(policy.displayName).tag(policy)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Current mode: \(viewModel.notchDisplayMode.displayName)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Compact icon spacing", isOn: Binding(
+                        get: { viewModel.compactMenuBarSpacingEnabled },
+                        set: { viewModel.setCompactMenuBarSpacingEnabled($0) }
+                    ))
+
+                    Text("System-wide notch masking is OS-level. MacMenubar only adjusts its own compact policy.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Link("Open BetterDisplay", destination: URL(string: "https://github.com/waydabber/BetterDisplay")!)
+                        .font(.caption)
+                }
+                .padding(.top, 6)
+            }
+
             GroupBox("Notch Actions") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("Enable Notch Drop Zone", isOn: $viewModel.isNotchDropZoneEnabled)
@@ -84,6 +115,43 @@ struct SettingsView: View {
                                 .lineLimit(2)
                                 .foregroundStyle(viewModel.notchActionIsError ? .orange : .secondary)
                         }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            GroupBox("Work Hub Motion") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text("Motion style")
+                        Text("Apple subtle")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.primary.opacity(0.1), in: Capsule())
+                    }
+
+                    Picker("Hub style", selection: Binding(
+                        get: { viewModel.workHubStyle },
+                        set: { viewModel.setWorkHubStyle($0) }
+                    )) {
+                        ForEach(WorkHubStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Toggle("Interactive magnet", isOn: Binding(
+                        get: { viewModel.interactiveMagnetEnabled },
+                        set: { viewModel.setInteractiveMagnetEnabled($0) }
+                    ))
+
+                    HStack(spacing: 8) {
+                        Text("Reduce Motion detected")
+                            .font(.caption)
+                        Text(reduceMotion ? "On" : "Off")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(reduceMotion ? .orange : .secondary)
                     }
                 }
                 .padding(.top, 6)
@@ -194,6 +262,8 @@ struct SettingsView: View {
                     Text("Reserved Center: \(Int(viewModel.layoutSnapshot.reservedCenterWidth))")
                     Text("Side Budget: \(Int(viewModel.layoutSnapshot.sideBudget))")
                     Text("Spacing: \(String(format: "%.1f", viewModel.layoutSnapshot.spacing))")
+                    Text("Compact Mode: \(viewModel.layoutSnapshot.effectiveCompactMode ? "On" : "Off")")
+                    Text("Spacing Multiplier: \(String(format: "%.3f", viewModel.layoutSnapshot.effectiveSpacingMultiplier))")
                     Text("External Visible: \(viewModel.externalVisibleItems.count)")
                     Text("External Overflow: \(viewModel.externalOverflowItems.count)")
                     Text("External Hidden Shelf: \(viewModel.externalHiddenShelfItems.count)")

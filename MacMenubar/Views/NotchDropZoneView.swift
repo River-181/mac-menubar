@@ -45,7 +45,8 @@ struct NotchDropZoneView: View {
                 viewModel.setDropZoneHover(true)
                 viewModel.beginDragSession(with: urls)
             },
-            onDragUpdated: { point in
+            onDragUpdated: { point, dynamics in
+                viewModel.updateDragDynamics(dynamics)
                 viewModel.updateDragTarget(action(at: point))
             },
             onDragExited: {
@@ -62,7 +63,9 @@ struct NotchDropZoneView: View {
     }
 
     private var isExpanded: Bool {
-        viewModel.isDropZoneHovered || viewModel.dragSession.isFileDrag || viewModel.notchDropState != .idle
+        viewModel.isDropZoneHovered
+            || viewModel.dragSession.isFileDrag
+            || viewModel.notchDropState != .idle
     }
 
     private var expandedContent: some View {
@@ -88,7 +91,8 @@ struct NotchDropZoneView: View {
                         .font(.caption.weight(.semibold))
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(messageTransition)
+                .animation(messageAnimation, value: viewModel.notchActionMessage)
             } else {
                 Text(helpText)
                     .font(.caption)
@@ -99,8 +103,15 @@ struct NotchDropZoneView: View {
     }
 
     private var helpText: String {
-        if case .processing = viewModel.notchDropState {
+        switch viewModel.notchDropState {
+        case .preheat:
+            return "Preparing actions..."
+        case .processing:
             return "Processing files..."
+        case .dropCommit(let action):
+            return "Applying \(action.displayName)..."
+        default:
+            break
         }
         if let action = viewModel.targetedDropAction {
             return "Drop to run \(action.displayName)."
@@ -117,6 +128,11 @@ struct NotchDropZoneView: View {
         let isProcessing = viewModel.notchDropState == .processing
         let isTargeted = viewModel.targetedDropAction == action
         let isRecommended = viewModel.recommendedDropAction == action && viewModel.targetedDropAction == nil && viewModel.dragSession.isFileDrag
+        let neighborOffset = neighborOffset(for: action)
+        let targetLift = isTargeted ? (-2 * viewModel.magnetSnapStrength) : 0
+        let targetScale = isTargeted ? (1 + (0.06 * viewModel.magnetSnapStrength)) : 1
+        let shadowOpacity = isTargeted ? 0.28 : 0.08
+        let shadowRadius: CGFloat = isTargeted ? 9 : 2
 
         Button {
             viewModel.performNotchAction(action, files: viewModel.droppedFiles)
@@ -136,8 +152,13 @@ struct NotchDropZoneView: View {
         .background(chipBackground(isAvailable: isAvailable, isTargeted: isTargeted, isRecommended: isRecommended))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(isTargeted ? Color.accentColor.opacity(0.95) : .clear, lineWidth: 1.4)
+                .strokeBorder(isTargeted ? Color.primary.opacity(0.45) : .clear, lineWidth: 1.2)
         )
+        .scaleEffect(targetScale)
+        .offset(x: neighborOffset, y: targetLift)
+        .shadow(color: Color.black.opacity(shadowOpacity), radius: shadowRadius, x: 0, y: isTargeted ? 3 : 1)
+        .animation(chipSnapAnimation, value: viewModel.targetedDropAction)
+        .animation(chipSnapAnimation, value: viewModel.magnetSnapStrength)
         .disabled(!isAvailable || isProcessing)
         .help(action.displayName)
         .background(
@@ -154,10 +175,14 @@ struct NotchDropZoneView: View {
     @ViewBuilder
     private func chipBackground(isAvailable: Bool, isTargeted: Bool, isRecommended: Bool) -> some View {
         let baseOpacity: CGFloat = isAvailable ? 0.09 : 0.04
-        let highlightOpacity: CGFloat = isTargeted ? 0.18 : (isRecommended ? 0.12 : baseOpacity)
+        let highlightOpacity: CGFloat = isTargeted ? 0.20 : (isRecommended ? 0.13 : baseOpacity)
         RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(.primary.opacity(highlightOpacity))
-            .animation(reduceMotion ? .easeOut(duration: 0.12) : .easeOut(duration: 0.14), value: isTargeted)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.white.opacity(isTargeted ? 0.06 : 0))
+            )
+            .animation(chipFocusReleaseAnimation, value: isTargeted)
     }
 
     private func shortLabel(for action: NotchActionKind) -> String {
@@ -188,7 +213,61 @@ struct NotchDropZoneView: View {
         if reduceMotion {
             return .easeOut(duration: 0.12)
         }
-        return .interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
+        return .interactiveSpring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.10)
+    }
+
+    private var chipSnapAnimation: Animation {
+        if reduceMotion {
+            return .easeOut(duration: 0.12)
+        }
+        return .spring(response: 0.22, dampingFraction: 0.80, blendDuration: 0.08)
+    }
+
+    private var chipFocusReleaseAnimation: Animation {
+        .easeOut(duration: 0.14)
+    }
+
+    private var messageTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity.animation(.easeOut(duration: 0.22))),
+            removal: .move(edge: .top).combined(with: .opacity.animation(.easeOut(duration: 0.18)))
+        )
+    }
+
+    private var messageAnimation: Animation {
+        if reduceMotion {
+            return .easeOut(duration: 0.12)
+        }
+        return .easeOut(duration: 0.22)
+    }
+
+    private func neighborOffset(for action: NotchActionKind) -> CGFloat {
+        guard viewModel.interactiveMagnetEnabled else { return 0 }
+        guard let target = viewModel.targetedDropAction else { return 0 }
+        guard action != target else { return 0 }
+
+        guard
+            let sourceIndex = NotchActionKind.allCases.firstIndex(of: action),
+            let targetIndex = NotchActionKind.allCases.firstIndex(of: target)
+        else {
+            return 0
+        }
+
+        let distance = abs(sourceIndex - targetIndex)
+        guard distance <= 2 else { return 0 }
+
+        let direction: CGFloat = sourceIndex < targetIndex ? 1 : -1
+        let baseOffset: CGFloat
+        switch distance {
+        case 1:
+            baseOffset = 4
+        case 2:
+            baseOffset = 2
+        default:
+            baseOffset = 0
+        }
+
+        return direction * baseOffset * viewModel.magnetSnapStrength
     }
 }
 
