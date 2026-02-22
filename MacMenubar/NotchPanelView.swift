@@ -171,7 +171,7 @@ struct NotchPanelView: View {
         if reduceMotion {
             return .easeOut(duration: 0.12)
         }
-        return .interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
+        return .interactiveSpring(response: 0.28, dampingFraction: 0.86, blendDuration: 0.10)
     }
 }
 

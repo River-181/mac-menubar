@@ -62,9 +62,11 @@ enum NotchActionKind: String, Codable, CaseIterable, Identifiable {
 
 enum NotchDropState: Equatable {
     case idle
+    case preheat
     case predrag
     case hovering
-    case targeting(NotchActionKind)
+    case magnetFocus(NotchActionKind)
+    case dropCommit(NotchActionKind)
     case processing
     case success
     case failure

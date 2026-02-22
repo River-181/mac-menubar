@@ -11,6 +11,8 @@ final class StatusBarController {
     private let dropZoneController: NotchDropZoneController
 
     private var cancellables = Set<AnyCancellable>()
+    private var restorePanelAfterSuppression: Bool = false
+    private var restoreDebounceWorkItem: DispatchWorkItem?
 
     init(viewModel: MenuBarViewModel) {
         self.viewModel = viewModel
@@ -139,6 +141,14 @@ final class StatusBarController {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.dropZoneController.refreshPosition()
+                self?.updatePanelSuppressionState()
+            }
+            .store(in: &cancellables)
+
+        viewModel.$dragSession
+            .receive(on: RunLoop.main)
+            .sink { [weak self] session in
+                self?.handleDragSessionChange(session)
             }
             .store(in: &cancellables)
 
@@ -146,6 +156,7 @@ final class StatusBarController {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 self?.dropZoneController.refreshPosition()
+                self?.updatePanelSuppressionState()
             }
             .store(in: &cancellables)
 
@@ -365,9 +376,7 @@ final class StatusBarController {
 
         menu.addItem(NSMenuItem.separator())
 
-        let settings = NSMenuItem(title: "Open Settings", action: #selector(openSettings), keyEquivalent: ",")
-        settings.target = self
-        menu.addItem(settings)
+        menu.addItem(makeSettingsMenuItem())
 
         let quit = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
@@ -382,7 +391,16 @@ final class StatusBarController {
         }
 
         if event.type == .rightMouseUp {
+            let wasShown = panelController.isShown
+            if wasShown {
+                panelController.hide(fadeDuration: 0.12)
+                renderStatusTitle()
+                rebuildMenu()
+            }
             NSMenu.popUpContextMenu(menu, with: event, for: button)
+            if wasShown && viewModel.isPanelEnabled && !isDropInteractionActive {
+                schedulePanelRestoreAfterContextMenu()
+            }
             return
         }
 
@@ -445,13 +463,76 @@ final class StatusBarController {
         viewModel.setIconGroup(id: selection.iconID, group: selection.group)
     }
 
-    @objc private func openSettings() {
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
     @objc private func quitApp() {
         NSApplication.shared.terminate(nil)
+    }
+
+    private func makeSettingsMenuItem() -> NSMenuItem {
+        let item = NSMenuItem()
+        let view = NSHostingView(
+            rootView: SettingsLink {
+                Text("Open Settings")
+            }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .frame(width: 220, height: 22, alignment: .leading)
+        )
+        view.frame = NSRect(x: 0, y: 0, width: 220, height: 22)
+        item.view = view
+        return item
+    }
+
+    private func handleDragSessionChange(_ session: DragSessionContext) {
+        _ = session
+        updatePanelSuppressionState()
+    }
+
+    private var isDropInteractionActive: Bool {
+        if viewModel.dragSession.isFileDrag { return true }
+        switch viewModel.notchDropState {
+        case .preheat, .predrag, .magnetFocus(_), .dropCommit(_), .processing:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func updatePanelSuppressionState() {
+        guard viewModel.isPanelEnabled else {
+            restorePanelAfterSuppression = false
+            return
+        }
+
+        if isDropInteractionActive {
+            if panelController.isShown {
+                restorePanelAfterSuppression = true
+                panelController.hide(fadeDuration: 0.12)
+                renderStatusTitle()
+                rebuildMenu()
+            }
+            return
+        }
+
+        if restorePanelAfterSuppression {
+            restorePanelAfterSuppression = false
+            panelController.show(fadeDuration: 0.12)
+            renderStatusTitle()
+            rebuildMenu()
+        }
+    }
+
+    private func schedulePanelRestoreAfterContextMenu() {
+        restoreDebounceWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard self.viewModel.isPanelEnabled else { return }
+            guard !self.isDropInteractionActive else { return }
+            self.panelController.show(fadeDuration: 0.12)
+            self.renderStatusTitle()
+            self.rebuildMenu()
+        }
+        restoreDebounceWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: workItem)
     }
 
     private func authStateLabel() -> String {
@@ -502,7 +583,6 @@ private final class NotchPanelController {
         self.viewModel = viewModel
 
         let content = NotchPanelView(viewModel: viewModel)
-            .frame(width: width - 20)
 
         let host = NSHostingController(rootView: content)
 
@@ -533,17 +613,44 @@ private final class NotchPanelController {
         isShown ? hide() : show()
     }
 
-    func show() {
-        guard !isShown else { return }
+    func show(fadeDuration: TimeInterval = 0) {
+        if isShown {
+            updateFrame(animated: true)
+            return
+        }
         isShown = true
+        panel.alphaValue = fadeDuration > 0 ? 0 : 1
         updateFrame(animated: false)
         panel.orderFrontRegardless()
+        guard fadeDuration > 0 else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 1
+        }
     }
 
-    func hide() {
+    func hide(fadeDuration: TimeInterval = 0) {
         guard isShown else { return }
-        isShown = false
-        panel.orderOut(nil)
+        guard fadeDuration > 0 else {
+            isShown = false
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            return
+        }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isShown = false
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+            }
+        }
     }
 
     func refreshPosition() {
@@ -568,8 +675,16 @@ private final class NotchPanelController {
 
         let frame = screen.frame
         let visible = screen.visibleFrame
-        let x = frame.midX - (width / 2)
-        let y = visible.maxY - height - 6
+        let hasNotch = viewModel.layoutSnapshot.notchWidth > 0
+        let anchor = HubAnchorCalculator.calculate(
+            screenFrame: frame,
+            visibleFrame: visible,
+            hasNotch: hasNotch,
+            hubHeight: height
+        )
+        let x = anchor.x - (width / 2)
+        let stackOffset: CGFloat = viewModel.isNotchDropZoneEnabled ? 24 : 6
+        let y = anchor.y - stackOffset
         return NSRect(x: x, y: y, width: width, height: height)
     }
 }
@@ -590,7 +705,6 @@ private final class NotchDropZoneController {
         self.viewModel = viewModel
 
         let content = NotchDropZoneView(viewModel: viewModel)
-            .frame(width: expandedWidth - 10)
         let host = NSHostingController(rootView: content)
 
         panel = NSPanel(

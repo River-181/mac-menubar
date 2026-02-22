@@ -11,7 +11,7 @@ struct AXScannedMenuBarItem {
 final class AXMenuBarScanner {
     private let menuBarThreshold: CGFloat = 42
 
-    func scan(excludingBundleID: String) -> [AXScannedMenuBarItem] {
+    func scan(excludingBundleID: String, captureIcons: Bool = true) -> [AXScannedMenuBarItem] {
         guard AXIsProcessTrusted() else {
             return []
         }
@@ -56,7 +56,7 @@ final class AXMenuBarScanner {
                 dedupe.insert(dedupeKey)
 
                 let supportsPressAction = supportsAction(kAXPressAction as String, for: child)
-                let iconData = captureIcon(in: frame)
+                let iconData = captureIcons ? captureIcon(in: frame) : nil
                 let id = makeStableID(
                     pid: app.processIdentifier,
                     bundleID: bundleID,

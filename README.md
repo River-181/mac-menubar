@@ -11,6 +11,10 @@ Swift + SwiftUI + AppKit (`NSStatusBar`, `NSStatusItem`) 기반 macOS 메뉴바 
   - `Always Visible`
   - `Smart Hide`
   - `Hidden`
+- `Adaptive Auto` 메뉴바 compaction
+  - 노치 화면 기본 `Compact`
+  - 외부 모니터 기본 `Respect`
+  - 강제 정책 `Always Compact / Always Respect`
 - AX(Accessibility) 기반 외부 메뉴바 아이콘 미러링
   - 외부 아이콘 스캔/동기화 (폴링 + 화면 이벤트 반영)
   - 노치 가용폭 기반 `externalVisibleItems` / `externalOverflowItems` 분리
@@ -18,6 +22,7 @@ Swift + SwiftUI + AppKit (`NSStatusBar`, `NSStatusItem`) 기반 macOS 메뉴바 
   - `Mirror + Hide` 성공 후 스캔에서 사라진 아이콘은 `Hidden Shelf`에서 계속 노출
   - `stale-hidden` 상태 배지 표시
 - 노치 드롭 액션 허브 (Hover + Drop 즉시 실행)
+  - 2.0 `Magnetic Chip Dock` 모션 (preheat/magnetFocus/dropCommit)
   - 이미지 -> PDF
   - PDF -> 이미지(페이지별 PNG)
   - ZIP 압축(생성 후 원본 휴지통 이동 + Undo)
@@ -28,7 +33,7 @@ Swift + SwiftUI + AppKit (`NSStatusBar`, `NSStatusItem`) 기반 macOS 메뉴바 
   - Workbench로 모으기 (`~/Library/Application Support/MacMenubar/Workbench`)
   - 휴지통 이동 + 8초 Undo
 - 노치 하단 Dynamic Island 스타일 패널
-  - Hover 확장 애니메이션 (Reduce Motion 대응)
+  - Hover 확장 애니메이션 (Apple subtle, Reduce Motion 대응)
   - 미디어 상태 + 재생 제어
   - 배터리 / CPU / 메모리 표시
   - 외부 아이콘 strip + Hidden Shelf 표시
@@ -86,4 +91,5 @@ xcodebuild -project MacMenubar.xcodeproj -scheme MacMenubar -destination 'platfo
 ## Notes
 
 - 외부 아이콘 숨김은 AX 제약으로 인해 best-effort입니다.
+- OS 레벨의 노치 마스킹은 앱이 제어하지 않으며, 필요 시 BetterDisplay 같은 외부 도구를 사용해야 합니다.
 - App Store 배포 호환성보다 개인/사내 도구 사용을 우선합니다.

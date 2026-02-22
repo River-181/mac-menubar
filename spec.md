@@ -1,4 +1,4 @@
-# MacMenubar Spec v1.1 — 노치 파일 액션 허브 + 외부 아이콘 숨김 선반
+# MacMenubar Spec v2.0 — Adaptive Compact + Magnetic Work Hub
 
 ## 1) 요약
 - 목적: 노치로 가려지는 메뉴바 아이콘 문제를 외부 아이콘 미러링/숨김 + 노치 허브로 해결하고, 드래그앤드롭 파일 작업을 실제 용량 절감 중심으로 강화한다.
@@ -127,3 +127,31 @@ xcodegen generate
 xcodebuild -project MacMenubar.xcodeproj -scheme MacMenubar -configuration Debug -destination 'platform=macOS' build
 xcodebuild -project MacMenubar.xcodeproj -scheme MacMenubar -destination 'platform=macOS' test
 ```
+
+## 9) v2.0 UX Polish Delta (결정 반영)
+- Adaptive Compact 정책
+  1. 기본값은 `Adaptive Auto`.
+  2. 노치가 있는 내장 화면은 기본 `Compact`.
+  3. 외부 모니터는 기본 `Respect`.
+  4. 강제 정책 `Always Compact / Always Respect`가 자동 정책보다 우선.
+- Magnetic Chip Dock 상태머신
+  1. `idle -> preheat -> predrag -> magnetFocus -> dropCommit -> processing -> success|failure -> idle`.
+  2. `preheat` 80ms, `dropCommit` 60ms.
+  3. 드래그 속도 기반으로 자석 스냅 강도를 감쇠.
+- 모션 토큰
+  1. 허브 확장/축소: `interactiveSpring(response:0.28,dampingFraction:0.86,blendDuration:0.10)`.
+  2. 칩 스냅: `spring(response:0.22,dampingFraction:0.80,blendDuration:0.08)`.
+  3. 포커스 해제: `easeOut(0.14)`.
+  4. 토스트: in `0.22s`, out `0.18s`.
+- 에너지 정책
+  1. 드래그 중에만 고주기 업데이트.
+  2. `DropTrackingView`는 30fps 스로틀 유지.
+  3. 포인터 이동이 `<= 1.5pt`이면 dynamics 업데이트 생략.
+- 패널/허브 공존
+  1. 드래그 활성 시 패널 suppress 유지.
+  2. suppress/restore에 120ms fade 적용.
+  3. 우클릭 컨텍스트 메뉴 종료 후 90ms debounce로 restore.
+- 설정 UX
+  1. `Menu Bar Compaction`: `Default Policy` + compact spacing 토글.
+  2. `Work Hub Motion`: `Magnetic Chip Dock`, `Interactive magnet`, `Reduce Motion` 감지 상태.
+  3. BetterDisplay는 안내 링크만 제공(앱 내부에서 OS notch masking 제어 없음).

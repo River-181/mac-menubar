@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import XCTest
 @testable import MacMenubar
@@ -94,6 +95,95 @@ final class ViewModelLayoutTests: XCTestCase {
         let music = viewModel.icons.first(where: { $0.id == "music" })
         XCTAssertEqual(music?.group, .hidden)
         XCTAssertEqual(music?.isVisible, false)
+    }
+
+    @MainActor
+    func testAdaptiveAutoUsesCompactWhenNotchExists() {
+        let externalProvider = MockExternalProvider()
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            defaults: defaults
+        )
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            XCTFail("Missing screen context for test")
+            return
+        }
+
+        viewModel.setNotchDefaultPolicy(.adaptiveAuto)
+        viewModel.applyDisplayPolicy(for: screen, hasNotch: true)
+
+        XCTAssertEqual(viewModel.notchDisplayMode, .hideNotchLike)
+    }
+
+    @MainActor
+    func testAdaptiveAutoUsesRespectWhenNoNotch() {
+        let externalProvider = MockExternalProvider()
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            defaults: defaults
+        )
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            XCTFail("Missing screen context for test")
+            return
+        }
+
+        viewModel.setNotchDefaultPolicy(.adaptiveAuto)
+        viewModel.applyDisplayPolicy(for: screen, hasNotch: false)
+
+        XCTAssertEqual(viewModel.notchDisplayMode, .respectNotch)
+    }
+
+    @MainActor
+    func testForcedPolicyOverridesAdaptive() {
+        let externalProvider = MockExternalProvider()
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            defaults: defaults
+        )
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            XCTFail("Missing screen context for test")
+            return
+        }
+
+        viewModel.setNotchDefaultPolicy(.alwaysRespect)
+        viewModel.applyDisplayPolicy(for: screen, hasNotch: true)
+        XCTAssertEqual(viewModel.notchDisplayMode, .respectNotch)
+
+        viewModel.setNotchDefaultPolicy(.alwaysCompact)
+        viewModel.applyDisplayPolicy(for: screen, hasNotch: false)
+        XCTAssertEqual(viewModel.notchDisplayMode, .hideNotchLike)
+    }
+
+    @MainActor
+    func testCompactSpacingIsClamped() {
+        let externalProvider = MockExternalProvider()
+        let viewModel = MenuBarViewModel(
+            metricsProvider: metricsProvider,
+            mediaProvider: mediaProvider,
+            externalProvider: externalProvider,
+            defaults: defaults
+        )
+
+        viewModel.setNotchDisplayMode(.hideNotchLike)
+        viewModel.recalculateLayout(
+            snapshot: LayoutSnapshot(
+                screenWidth: 1600,
+                notchWidth: 170,
+                reservedCenterWidth: 220,
+                sideBudget: 1200,
+                spacing: 14,
+                fullscreenLike: false
+            )
+        )
+
+        XCTAssertGreaterThanOrEqual(viewModel.layoutSnapshot.spacing, 3.5)
+        XCTAssertLessThanOrEqual(viewModel.layoutSnapshot.spacing, 9.5)
     }
 }
 

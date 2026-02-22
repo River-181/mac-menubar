@@ -35,6 +35,51 @@ enum ThemeMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum NotchDisplayMode: String, Codable, CaseIterable, Identifiable {
+    case respectNotch
+    case hideNotchLike
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .respectNotch:
+            return "Respect Notch"
+        case .hideNotchLike:
+            return "Hide Notch (Compact)"
+        }
+    }
+}
+
+enum NotchDefaultPolicy: String, Codable, CaseIterable, Identifiable {
+    case adaptiveAuto
+    case alwaysCompact
+    case alwaysRespect
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .adaptiveAuto:
+            return "Adaptive Auto"
+        case .alwaysCompact:
+            return "Always Compact"
+        case .alwaysRespect:
+            return "Always Respect"
+        }
+    }
+}
+
+enum WorkHubStyle: String, Codable, CaseIterable, Identifiable {
+    case magneticDock
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        "Magnetic Chip Dock"
+    }
+}
+
 struct MenuBarIcon: Identifiable, Codable, Equatable {
     let id: String
     var title: String
@@ -53,6 +98,8 @@ struct LayoutSnapshot: Equatable {
     var sideBudget: CGFloat
     var spacing: CGFloat
     var fullscreenLike: Bool
+    var effectiveCompactMode: Bool = false
+    var effectiveSpacingMultiplier: CGFloat = 1
 
     static let zero = LayoutSnapshot(
         screenWidth: 0,
@@ -60,7 +107,9 @@ struct LayoutSnapshot: Equatable {
         reservedCenterWidth: 0,
         sideBudget: 320,
         spacing: 8,
-        fullscreenLike: false
+        fullscreenLike: false,
+        effectiveCompactMode: false,
+        effectiveSpacingMultiplier: 1
     )
 }
 
@@ -108,6 +157,9 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var overflowIcons: [MenuBarIcon] = []
     @Published private(set) var layoutSnapshot: LayoutSnapshot = .zero
     @Published var spacing: CGFloat = 8
+    @Published var notchDisplayMode: NotchDisplayMode = .respectNotch
+    @Published var notchDefaultPolicy: NotchDefaultPolicy = .adaptiveAuto
+    @Published var compactMenuBarSpacingEnabled: Bool = false
 
     @Published var isPanelEnabled: Bool = true
     @Published var isPanelExpanded: Bool = false
@@ -117,8 +169,12 @@ final class MenuBarViewModel: ObservableObject {
 
     @Published var isNotchDropZoneEnabled: Bool = true
     @Published var instantExecutionEnabled: Bool = true
+    @Published var workHubStyle: WorkHubStyle = .magneticDock
+    @Published var interactiveMagnetEnabled: Bool = true
     @Published var isDropZoneHovered: Bool = false
     @Published private(set) var notchDropState: NotchDropState = .idle
+    @Published private(set) var dragDynamics: DragDynamics = .zero
+    @Published private(set) var magnetSnapStrength: CGFloat = 1
     @Published private(set) var droppedFiles: [DroppedFileDescriptor] = []
     @Published private(set) var availableDropActions: [NotchActionKind] = []
     @Published private(set) var notchActionMessage: String = ""
@@ -194,6 +250,11 @@ final class MenuBarViewModel: ObservableObject {
 
     private let defaultsKey = "menubar.icon.configuration.v2"
     private let externalDefaultsKey = "external.icon.preferences.v1"
+    private let notchDisplayModeDefaultsKey = "menubar.notch.display.mode.v1"
+    private let notchDefaultPolicyDefaultsKey = "menubar.notch.default.policy.v2"
+    private let compactSpacingDefaultsKey = "menubar.compact.spacing.enabled.v1"
+    private let workHubStyleDefaultsKey = "workhub.style.v2"
+    private let interactiveMagnetDefaultsKey = "workhub.magnet.enabled.v2"
     private let defaults: UserDefaults
     private let metricsProvider: MetricsProviding
     private let mediaProvider: MediaProviding
@@ -203,6 +264,9 @@ final class MenuBarViewModel: ObservableObject {
     private var dropContentKind: DropContentKind = .unsupported
     private var lastUndoToken: UndoToken?
     private var undoExpiryNonce = UUID()
+    private var rawLayoutSnapshot: LayoutSnapshot = .zero
+    private let preheatDuration: TimeInterval = 0.08
+    private let dropCommitDuration: TimeInterval = 0.06
 
     init(
         metricsProvider: MetricsProviding = SystemMetricsService(),
@@ -225,6 +289,7 @@ final class MenuBarViewModel: ObservableObject {
             MenuBarIcon(id: "vpn", title: "VPN", shortTitle: "VPN", group: .hidden, priority: 10, minimumWidth: 36, lastInteractionAt: .now, isVisible: false)
         ]
 
+        loadLayoutPreferences()
         loadIconConfiguration()
         loadExternalPreferences()
         bindServices()
@@ -244,8 +309,10 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     func recalculateLayout(snapshot: LayoutSnapshot) {
-        layoutSnapshot = snapshot
-        spacing = snapshot.spacing
+        rawLayoutSnapshot = snapshot
+        let resolvedSnapshot = resolvedLayoutSnapshot(from: snapshot)
+        layoutSnapshot = resolvedSnapshot
+        spacing = resolvedSnapshot.spacing
 
         let always = sortedIcons(in: .alwaysVisible)
         let smart = sortedIcons(in: .smartHide)
@@ -260,7 +327,7 @@ final class MenuBarViewModel: ObservableObject {
 
         for icon in smart {
             let nextWidth = usedWidth + icon.minimumWidth + spacing
-            if nextWidth <= snapshot.sideBudget {
+            if nextWidth <= resolvedSnapshot.sideBudget {
                 visibleIDs.insert(icon.id)
                 usedWidth = nextWidth
             }
@@ -298,6 +365,63 @@ final class MenuBarViewModel: ObservableObject {
         useAccentTheme = accentEnabled
     }
 
+    func setNotchDisplayMode(_ mode: NotchDisplayMode) {
+        guard notchDisplayMode != mode else { return }
+        notchDisplayMode = mode
+        persistLayoutPreferences()
+        recalculateLayout(snapshot: rawLayoutSnapshot)
+    }
+
+    func applyDisplayPolicy(for screen: NSScreen, hasNotch: Bool) {
+        _ = screen
+        let resolvedMode: NotchDisplayMode
+        switch notchDefaultPolicy {
+        case .adaptiveAuto:
+            resolvedMode = hasNotch ? .hideNotchLike : .respectNotch
+        case .alwaysCompact:
+            resolvedMode = .hideNotchLike
+        case .alwaysRespect:
+            resolvedMode = .respectNotch
+        }
+
+        guard notchDisplayMode != resolvedMode else { return }
+        notchDisplayMode = resolvedMode
+        persistLayoutPreferences()
+    }
+
+    func setNotchDefaultPolicy(_ policy: NotchDefaultPolicy) {
+        guard notchDefaultPolicy != policy else { return }
+        notchDefaultPolicy = policy
+        persistLayoutPreferences()
+        if let screen = NSScreen.main {
+            let hasNotch = max(0, screen.frame.width - (screen.safeAreaInsets.left + screen.safeAreaInsets.right)) > 0
+            applyDisplayPolicy(for: screen, hasNotch: hasNotch)
+        }
+        recalculateLayout(snapshot: rawLayoutSnapshot)
+    }
+
+    func setCompactMenuBarSpacingEnabled(_ enabled: Bool) {
+        guard compactMenuBarSpacingEnabled != enabled else { return }
+        compactMenuBarSpacingEnabled = enabled
+        persistLayoutPreferences()
+        recalculateLayout(snapshot: rawLayoutSnapshot)
+    }
+
+    func setWorkHubStyle(_ style: WorkHubStyle) {
+        guard workHubStyle != style else { return }
+        workHubStyle = style
+        persistLayoutPreferences()
+    }
+
+    func setInteractiveMagnetEnabled(_ enabled: Bool) {
+        guard interactiveMagnetEnabled != enabled else { return }
+        interactiveMagnetEnabled = enabled
+        if !enabled {
+            magnetSnapStrength = 1
+        }
+        persistLayoutPreferences()
+    }
+
     func setPanelExpanded(_ expanded: Bool) {
         isPanelExpanded = expanded
     }
@@ -307,7 +431,9 @@ final class MenuBarViewModel: ObservableObject {
         if hovering {
             if dragSession.isFileDrag {
                 if let targetedDropAction {
-                    notchDropState = .targeting(targetedDropAction)
+                    notchDropState = .magnetFocus(targetedDropAction)
+                } else if notchDropState == .preheat {
+                    // Keep preheat briefly to avoid abrupt expansion on fast drags.
                 } else {
                     notchDropState = .predrag
                 }
@@ -330,6 +456,8 @@ final class MenuBarViewModel: ObservableObject {
             hoveredAction: nil,
             enteredAt: .now
         )
+        dragDynamics = .zero
+        magnetSnapStrength = 1
 
         let classification = fileActionService.classify(urls: urls)
         droppedFiles = classification.descriptors
@@ -337,7 +465,18 @@ final class MenuBarViewModel: ObservableObject {
         recommendedDropAction = classification.recommendedAction
         targetedDropAction = nil
         refreshDropCapabilities()
-        notchDropState = .predrag
+        notchDropState = .preheat
+
+        let capturedEnteredAt = dragSession.enteredAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + preheatDuration) { [weak self] in
+            guard let self else { return }
+            guard self.dragSession.isFileDrag else { return }
+            guard self.dragSession.enteredAt == capturedEnteredAt else { return }
+            guard self.targetedDropAction == nil else { return }
+            if case .preheat = self.notchDropState {
+                self.notchDropState = .predrag
+            }
+        }
     }
 
     func updateDragTarget(_ action: NotchActionKind?) {
@@ -347,18 +486,34 @@ final class MenuBarViewModel: ObservableObject {
         dragSession.hoveredAction = action
 
         if let action {
-            notchDropState = .targeting(action)
+            notchDropState = .magnetFocus(action)
         } else {
             notchDropState = .predrag
         }
+    }
+
+    func updateDragDynamics(_ dynamics: DragDynamics) {
+        guard dragSession.isFileDrag else { return }
+        dragDynamics = dynamics
+
+        guard interactiveMagnetEnabled else {
+            magnetSnapStrength = 1
+            return
+        }
+
+        let speed = min(max(dynamics.speed, 0), 2200)
+        let normalized = min(1, speed / 1300)
+        magnetSnapStrength = max(0.38, 1 - (normalized * 0.55))
     }
 
     func endDragSession() {
         dragSession = .idle
         targetedDropAction = nil
         recommendedDropAction = nil
+        dragDynamics = .zero
+        magnetSnapStrength = 1
         switch notchDropState {
-        case .predrag, .targeting(_), .hovering:
+        case .preheat, .predrag, .magnetFocus(_), .hovering:
             if !isDropZoneHovered, !canUndoLastDangerousAction {
                 notchDropState = .idle
                 notchActionMessage = ""
@@ -393,11 +548,17 @@ final class MenuBarViewModel: ObservableObject {
         if instantExecutionEnabled,
            let selectedAction,
            availableDropActions.contains(selectedAction) {
-            performNotchAction(selectedAction, files: droppedFiles)
+            let committedFiles = droppedFiles
+            notchDropState = .dropCommit(selectedAction)
+            DispatchQueue.main.asyncAfter(deadline: .now() + dropCommitDuration) { [weak self] in
+                guard let self else { return }
+                self.performNotchAction(selectedAction, files: committedFiles)
+                self.endDragSession()
+            }
         } else {
             setNotchActionMessage("Choose an action to process \(droppedFiles.count) file(s).", error: false)
+            endDragSession()
         }
-        endDragSession()
     }
 
     func performNotchAction(_ action: NotchActionKind, files: [DroppedFileDescriptor]) {
@@ -728,6 +889,61 @@ final class MenuBarViewModel: ObservableObject {
         externalPreferences = decoded
     }
 
+    private func loadLayoutPreferences() {
+        if let raw = defaults.string(forKey: notchDefaultPolicyDefaultsKey),
+           let policy = NotchDefaultPolicy(rawValue: raw) {
+            notchDefaultPolicy = policy
+        }
+        if let raw = defaults.string(forKey: notchDisplayModeDefaultsKey),
+           let mode = NotchDisplayMode(rawValue: raw) {
+            notchDisplayMode = mode
+        }
+        if let raw = defaults.string(forKey: workHubStyleDefaultsKey),
+           let style = WorkHubStyle(rawValue: raw) {
+            workHubStyle = style
+        }
+        compactMenuBarSpacingEnabled = defaults.bool(forKey: compactSpacingDefaultsKey)
+        if defaults.object(forKey: interactiveMagnetDefaultsKey) != nil {
+            interactiveMagnetEnabled = defaults.bool(forKey: interactiveMagnetDefaultsKey)
+        }
+    }
+
+    private func persistLayoutPreferences() {
+        defaults.set(notchDefaultPolicy.rawValue, forKey: notchDefaultPolicyDefaultsKey)
+        defaults.set(notchDisplayMode.rawValue, forKey: notchDisplayModeDefaultsKey)
+        defaults.set(compactMenuBarSpacingEnabled, forKey: compactSpacingDefaultsKey)
+        defaults.set(workHubStyle.rawValue, forKey: workHubStyleDefaultsKey)
+        defaults.set(interactiveMagnetEnabled, forKey: interactiveMagnetDefaultsKey)
+    }
+
+    private func resolvedLayoutSnapshot(from snapshot: LayoutSnapshot) -> LayoutSnapshot {
+        var resolved = snapshot
+        let compactMode = notchDisplayMode == .hideNotchLike
+
+        let compactSpacingFromSideBudget = compactSpacing(sideBudget: snapshot.sideBudget, fullscreenLike: snapshot.fullscreenLike)
+        let respectSpacingFromSideBudget = respectSpacing(sideBudget: snapshot.sideBudget, fullscreenLike: snapshot.fullscreenLike)
+
+        if compactMode {
+            let compactReservedCenterWidth: CGFloat = 48
+            resolved.notchWidth = 0
+            resolved.reservedCenterWidth = compactReservedCenterWidth
+            resolved.sideBudget = max(220, (snapshot.screenWidth - compactReservedCenterWidth) / 2)
+            resolved.spacing = compactSpacing(sideBudget: resolved.sideBudget, fullscreenLike: snapshot.fullscreenLike)
+            resolved.effectiveSpacingMultiplier = compactSpacingFromSideBudget / max(respectSpacingFromSideBudget, 0.001)
+        } else {
+            resolved.spacing = respectSpacing(sideBudget: resolved.sideBudget, fullscreenLike: snapshot.fullscreenLike)
+            resolved.effectiveSpacingMultiplier = 1
+        }
+
+        if compactMenuBarSpacingEnabled {
+            resolved.spacing = max(3.5, resolved.spacing * 0.90)
+            resolved.effectiveSpacingMultiplier *= 0.90
+        }
+
+        resolved.effectiveCompactMode = compactMode
+        return resolved
+    }
+
     private func persistExternalPreferences() {
         guard let data = try? JSONEncoder().encode(externalPreferences) else { return }
         defaults.set(data, forKey: externalDefaultsKey)
@@ -754,5 +970,30 @@ final class MenuBarViewModel: ObservableObject {
                 self.lastUndoToken = nil
             }
         }
+    }
+
+    private func respectSpacing(sideBudget: CGFloat, fullscreenLike: Bool) -> CGFloat {
+        let base = baseSpacing(sideBudget: sideBudget)
+        if fullscreenLike {
+            return max(4, base * 0.72)
+        }
+        return base
+    }
+
+    private func compactSpacing(sideBudget: CGFloat, fullscreenLike: Bool) -> CGFloat {
+        let base = baseSpacing(sideBudget: sideBudget)
+        var compact = clamp(base * 0.72, lower: 3.5, upper: 9.5)
+        if fullscreenLike {
+            compact = max(3.5, compact * 0.9)
+        }
+        return compact
+    }
+
+    private func baseSpacing(sideBudget: CGFloat) -> CGFloat {
+        clamp(sideBudget / 180, lower: 6, upper: 14)
+    }
+
+    private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
+        Swift.max(lower, Swift.min(upper, value))
     }
 }
