@@ -31,6 +31,12 @@ enum ExternalHideFailureReason: String, Codable, Equatable {
     case actionFailed
 }
 
+enum ExternalShelfState: String, Codable, Equatable {
+    case none
+    case hidden
+    case staleHidden
+}
+
 struct ExternalMenuBarItem: Identifiable, Equatable {
     let id: String
     var ownerBundleID: String
@@ -41,6 +47,7 @@ struct ExternalMenuBarItem: Identifiable, Equatable {
     var iconPNGData: Data?
     var lastSeenAt: Date
     var lastInteractionAt: Date
+    var shelfState: ExternalShelfState
 
     var estimatedWidth: CGFloat {
         max(22, min(56, frameInScreen.width + 8))
@@ -69,10 +76,12 @@ struct ExternalModeUpdateResult: Equatable {
 @MainActor
 protocol ExternalMenuBarProviding: AnyObject {
     var externalItemsPublisher: AnyPublisher<[ExternalMenuBarItem], Never> { get }
+    var hiddenShelfPublisher: AnyPublisher<[ExternalMenuBarItem], Never> { get }
     func start()
     func stop()
     func refresh()
     func setVisibilityMode(_ mode: ExternalItemVisibilityMode, for itemID: String) -> ExternalModeUpdateResult
+    func revealHiddenItem(_ itemID: String) -> Bool
     func performPrimaryAction(for itemID: String) -> Bool
     func currentAuthState() -> MirrorAuthState
     func requestPermission() -> MirrorAuthState
@@ -87,5 +96,6 @@ protocol AXPermissionProviding: AnyObject {
 
 protocol AXActionBridging: AnyObject {
     func performPrimaryAction(on element: AXUIElement, fallbackFrame: CGRect?) -> Bool
+    func performFallbackClick(frame: CGRect) -> Bool
     func setHidden(_ hidden: Bool, for element: AXUIElement) -> ExternalHideFailureReason?
 }

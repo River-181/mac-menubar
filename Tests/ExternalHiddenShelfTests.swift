@@ -3,17 +3,17 @@ import CoreGraphics
 import XCTest
 @testable import MacMenubar
 
-final class ExternalIconPolicyTests: XCTestCase {
-    private var metricsProvider: TestMetricsProvider!
-    private var mediaProvider: TestMediaProvider!
+final class ExternalHiddenShelfTests: XCTestCase {
+    private var metricsProvider: HiddenShelfMetricsProvider!
+    private var mediaProvider: HiddenShelfMediaProvider!
     private var defaults: UserDefaults!
     private var defaultsSuiteName: String!
 
     override func setUp() {
         super.setUp()
-        metricsProvider = TestMetricsProvider()
-        mediaProvider = TestMediaProvider()
-        defaultsSuiteName = "tests.macmenubar.external.\(UUID().uuidString)"
+        metricsProvider = HiddenShelfMetricsProvider()
+        mediaProvider = HiddenShelfMediaProvider()
+        defaultsSuiteName = "tests.macmenubar.hidden-shelf.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: defaultsSuiteName)
     }
 
@@ -29,8 +29,8 @@ final class ExternalIconPolicyTests: XCTestCase {
     }
 
     @MainActor
-    func testExternalItemsSplitIntoVisibleAndOverflowByBudget() {
-        let externalProvider = TestExternalProvider()
+    func testHiddenShelfItemsArePublishedWhenVisibleListIsEmpty() {
+        let externalProvider = HiddenShelfExternalProvider()
         let viewModel = MenuBarViewModel(
             metricsProvider: metricsProvider,
             mediaProvider: mediaProvider,
@@ -38,36 +38,17 @@ final class ExternalIconPolicyTests: XCTestCase {
             defaults: defaults
         )
 
-        viewModel.recalculateLayout(
-            snapshot: LayoutSnapshot(
-                screenWidth: 1512,
-                notchWidth: 164,
-                reservedCenterWidth: 212,
-                sideBudget: 180,
-                spacing: 8,
-                fullscreenLike: false
-            )
-        )
-
-        externalProvider.push(items: [
-            makeItem(id: "a", x: 1450),
-            makeItem(id: "b", x: 1410),
-            makeItem(id: "c", x: 1370)
-        ])
+        let hidden = makeItem(id: "h1", x: 1400, shelfState: .hidden)
+        externalProvider.pushHidden(items: [hidden])
         pumpMainRunLoop()
 
-        XCTAssertEqual(viewModel.externalVisibleItems.map(\.id), ["a", "b"])
-        XCTAssertEqual(viewModel.externalOverflowItems.map(\.id), ["c"])
+        XCTAssertEqual(viewModel.externalHiddenShelfItems.map(\.id), ["h1"])
+        XCTAssertTrue(viewModel.externalStatusSummary.contains("HiddenShelf 1"))
     }
 
     @MainActor
-    func testHideDowngradesToMirrorOnlyOnUnsupportedItem() {
-        let externalProvider = TestExternalProvider()
-        externalProvider.setModeResult = ExternalModeUpdateResult(
-            effectiveMode: .mirrorOnly,
-            downgradeReason: .unsupportedAttribute
-        )
-
+    func testStaleHiddenBadgeStateIsPreserved() {
+        let externalProvider = HiddenShelfExternalProvider()
         let viewModel = MenuBarViewModel(
             metricsProvider: metricsProvider,
             mediaProvider: mediaProvider,
@@ -75,15 +56,16 @@ final class ExternalIconPolicyTests: XCTestCase {
             defaults: defaults
         )
 
-        viewModel.setExternalItemMode(itemID: "x", mode: .mirrorAndHide)
+        let stale = makeItem(id: "stale", x: 1200, shelfState: .staleHidden)
+        externalProvider.pushHidden(items: [stale])
+        pumpMainRunLoop()
 
-        XCTAssertEqual(viewModel.externalMode(for: "x"), .mirrorOnly)
-        XCTAssertEqual(viewModel.externalDowngradeReason(for: "x"), .unsupportedAttribute)
+        XCTAssertEqual(viewModel.externalHiddenShelfItems.first?.shelfState, .staleHidden)
     }
 
     @MainActor
-    func testPinningPrioritizesVisibilityOrder() {
-        let externalProvider = TestExternalProvider()
+    func testMirrorOnlyModeAndRefreshCanClearHiddenShelf() {
+        let externalProvider = HiddenShelfExternalProvider()
         let viewModel = MenuBarViewModel(
             metricsProvider: metricsProvider,
             mediaProvider: mediaProvider,
@@ -91,41 +73,29 @@ final class ExternalIconPolicyTests: XCTestCase {
             defaults: defaults
         )
 
-        viewModel.recalculateLayout(
-            snapshot: LayoutSnapshot(
-                screenWidth: 1512,
-                notchWidth: 164,
-                reservedCenterWidth: 212,
-                sideBudget: 180,
-                spacing: 8,
-                fullscreenLike: false
-            )
-        )
-
-        externalProvider.push(items: [
-            makeItem(id: "a", x: 1450),
-            makeItem(id: "b", x: 1410),
-            makeItem(id: "c", x: 1370)
-        ])
-        pumpMainRunLoop()
-        viewModel.setExternalItemPinned(itemID: "c", pinned: true)
+        let hidden = makeItem(id: "h2", x: 1300, shelfState: .hidden)
+        externalProvider.pushHidden(items: [hidden])
         pumpMainRunLoop()
 
-        XCTAssertEqual(viewModel.externalVisibleItems.first?.id, "c")
+        viewModel.setExternalItemMode(itemID: "h2", mode: .mirrorOnly)
+        externalProvider.pushHidden(items: [])
+        pumpMainRunLoop()
+
+        XCTAssertTrue(viewModel.externalHiddenShelfItems.isEmpty)
     }
 
-    private func makeItem(id: String, x: CGFloat) -> ExternalMenuBarItem {
+    private func makeItem(id: String, x: CGFloat, shelfState: ExternalShelfState) -> ExternalMenuBarItem {
         ExternalMenuBarItem(
             id: id,
             ownerBundleID: "com.example.\(id)",
             displayName: "Item \(id)",
-            frameInScreen: CGRect(x: x, y: 860, width: 50, height: 20),
-            isVisibleInSystemBar: true,
+            frameInScreen: CGRect(x: x, y: 860, width: 24, height: 16),
+            isVisibleInSystemBar: false,
             supportsPressAction: true,
             iconPNGData: nil,
             lastSeenAt: .now,
             lastInteractionAt: .distantPast,
-            shelfState: .none
+            shelfState: shelfState
         )
     }
 
@@ -135,7 +105,7 @@ final class ExternalIconPolicyTests: XCTestCase {
     }
 }
 
-private final class TestMetricsProvider: MetricsProviding {
+private final class HiddenShelfMetricsProvider: MetricsProviding {
     var metricsPublisher: AnyPublisher<SystemMetrics, Never> {
         subject.eraseToAnyPublisher()
     }
@@ -146,7 +116,7 @@ private final class TestMetricsProvider: MetricsProviding {
     func stop() {}
 }
 
-private final class TestMediaProvider: MediaProviding {
+private final class HiddenShelfMediaProvider: MediaProviding {
     var mediaStatePublisher: AnyPublisher<MediaState, Never> {
         subject.eraseToAnyPublisher()
     }
@@ -161,7 +131,7 @@ private final class TestMediaProvider: MediaProviding {
 }
 
 @MainActor
-private final class TestExternalProvider: ExternalMenuBarProviding {
+private final class HiddenShelfExternalProvider: ExternalMenuBarProviding {
     var externalItemsPublisher: AnyPublisher<[ExternalMenuBarItem], Never> {
         subject.eraseToAnyPublisher()
     }
@@ -170,8 +140,7 @@ private final class TestExternalProvider: ExternalMenuBarProviding {
         hiddenSubject.eraseToAnyPublisher()
     }
 
-    var authState: MirrorAuthState = .granted
-    var setModeResult = ExternalModeUpdateResult(effectiveMode: .mirrorOnly, downgradeReason: nil)
+    var modeResult = ExternalModeUpdateResult(effectiveMode: .mirrorOnly, downgradeReason: nil)
 
     private let subject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
     private let hiddenSubject = CurrentValueSubject<[ExternalMenuBarItem], Never>([])
@@ -180,12 +149,12 @@ private final class TestExternalProvider: ExternalMenuBarProviding {
     func stop() {}
     func refresh() {}
 
-    func push(items: [ExternalMenuBarItem]) {
-        subject.send(items)
+    func pushHidden(items: [ExternalMenuBarItem]) {
+        hiddenSubject.send(items)
     }
 
     func setVisibilityMode(_ mode: ExternalItemVisibilityMode, for itemID: String) -> ExternalModeUpdateResult {
-        setModeResult
+        modeResult
     }
 
     func revealHiddenItem(_ itemID: String) -> Bool {
@@ -197,11 +166,11 @@ private final class TestExternalProvider: ExternalMenuBarProviding {
     }
 
     func currentAuthState() -> MirrorAuthState {
-        authState
+        .granted
     }
 
     func requestPermission() -> MirrorAuthState {
-        authState
+        .granted
     }
 
     func openSystemSettings() {}

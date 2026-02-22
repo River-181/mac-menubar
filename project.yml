@@ -22,6 +22,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.river.macmenubar
         PRODUCT_NAME: MacMenubar
         GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_LSUIElement: YES
         CODE_SIGNING_ALLOWED: NO
     scheme:
       testTargets:

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct NotchPanelView: View {
     @ObservedObject var viewModel: MenuBarViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -23,7 +24,7 @@ struct NotchPanelView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .preferredColorScheme(preferredColorScheme)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: viewModel.isPanelExpanded)
+        .animation(panelAnimation, value: viewModel.isPanelExpanded)
         .onHover { isHovering in
             viewModel.setPanelExpanded(isHovering)
         }
@@ -66,6 +67,12 @@ struct NotchPanelView: View {
             Text("\(viewModel.mediaState.isPlaying ? "Playing" : "Paused") · \(viewModel.mediaState.sourceApp.isEmpty ? "Media" : viewModel.mediaState.sourceApp)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if viewModel.lastReclaimedBytes > 0 {
+                Text("Last reclaim: \(ByteCountFormatter.string(fromByteCount: viewModel.lastReclaimedBytes, countStyle: .file))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
 
             if viewModel.isNotchDropZoneEnabled {
                 Text("Notch Drop Zone enabled")
@@ -130,8 +137,8 @@ struct NotchPanelView: View {
         if viewModel.useAccentTheme {
             LinearGradient(
                 colors: [
-                    Color.accentColor.opacity(0.24),
-                    Color.black.opacity(0.56)
+                    Color.accentColor.opacity(0.18),
+                    Color(NSColor.windowBackgroundColor).opacity(0.84)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -142,8 +149,8 @@ struct NotchPanelView: View {
                     .fill(.ultraThinMaterial)
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(0.06),
-                        Color.black.opacity(0.18)
+                        Color(NSColor.controlBackgroundColor).opacity(0.35),
+                        Color(NSColor.separatorColor).opacity(0.15)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -158,6 +165,13 @@ struct NotchPanelView: View {
         case .light: return .light
         case .dark: return .dark
         }
+    }
+
+    private var panelAnimation: Animation {
+        if reduceMotion {
+            return .easeOut(duration: 0.12)
+        }
+        return .interactiveSpring(response: 0.30, dampingFraction: 0.82, blendDuration: 0.10)
     }
 }
 

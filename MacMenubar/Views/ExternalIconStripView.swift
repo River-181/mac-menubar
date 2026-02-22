@@ -32,6 +32,32 @@ struct ExternalIconStripView: View {
                         .help("External overflow")
                 }
             }
+
+            if !viewModel.externalHiddenShelfItems.isEmpty {
+                HStack(spacing: 6) {
+                    Text("Hidden Shelf")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(viewModel.externalHiddenShelfItems) { item in
+                        Button {
+                            viewModel.performExternalItemPrimaryAction(itemID: item.id)
+                        } label: {
+                            iconContent(for: item)
+                                .overlay(alignment: .topTrailing) {
+                                    if item.shelfState == .staleHidden {
+                                        Circle()
+                                            .fill(.orange)
+                                            .frame(width: 6, height: 6)
+                                    }
+                                }
+                        }
+                        .buttonStyle(ExternalStripButtonStyle())
+                        .help(item.shelfState == .staleHidden ? "\(item.displayName) (stale-hidden)" : item.displayName)
+                    }
+                }
+            }
+
             Text(viewModel.externalStatusSummary)
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
