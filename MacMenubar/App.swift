@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 @main
 struct MacMenubarApp: App {
@@ -8,12 +8,15 @@ struct MacMenubarApp: App {
     var body: some Scene {
         Settings {
             SettingsView(viewModel: appDelegate.viewModel)
+                .frame(width: 660, height: 720)
         }
     }
 }
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = MenuBarViewModel()
+
     private var statusBarController: StatusBarController?
     private var notchManager: NotchManager?
 
@@ -22,20 +25,258 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notchManager = NotchManager(viewModel: viewModel)
         notchManager?.startMonitoring()
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        notchManager?.stopMonitoring()
+        viewModel.shutdown()
+    }
 }
 
 struct SettingsView: View {
     @ObservedObject var viewModel: MenuBarViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Menu Bar Layout")
-                .font(.headline)
-            Toggle("Enable Dynamic Island Panel", isOn: $viewModel.isPanelEnabled)
-            Toggle("Show CPU + Memory", isOn: $viewModel.showSystemStats)
-            Toggle("Use Accent Theme", isOn: $viewModel.useAccentTheme)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Image("BrandLogo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 28, height: 28)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                Text("MacMenubar")
+                    .font(.title3.weight(.semibold))
+            }
+
+            GroupBox("Panel") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Toggle("Enable Dynamic Island Panel", isOn: $viewModel.isPanelEnabled)
+                    Toggle("Show CPU + Memory", isOn: $viewModel.showSystemStats)
+                    Toggle("Use Accent Theme", isOn: $viewModel.useAccentTheme)
+                    Picker("Theme", selection: $viewModel.themeMode) {
+                        ForEach(ThemeMode.allCases) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(.top, 6)
+            }
+
+            GroupBox("Notch Actions") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("Enable Notch Drop Zone", isOn: $viewModel.isNotchDropZoneEnabled)
+                    Toggle("Enable Instant Execution", isOn: $viewModel.instantExecutionEnabled)
+                    Text("Undo timeout: 8s")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("Open Workbench Folder") {
+                            viewModel.openWorkbenchFolder()
+                        }
+                        if !viewModel.notchActionMessage.isEmpty {
+                            Text(viewModel.notchActionMessage)
+                                .font(.caption)
+                                .lineLimit(2)
+                                .foregroundStyle(viewModel.notchActionIsError ? .orange : .secondary)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            GroupBox("External Icons") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) {
+                        Text("Accessibility")
+                        Text(authStateLabel)
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(authStateColor.opacity(0.18), in: Capsule())
+                            .foregroundStyle(authStateColor)
+                    }
+
+                    if viewModel.mirrorAuthState == .granted {
+                        Text(viewModel.externalStatusSummary)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Text(viewModel.externalHideStatsSummary)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button("Request Permission") {
+                            viewModel.requestAXPermission()
+                        }
+
+                        Button("Open Accessibility Settings") {
+                            viewModel.openAXSettings()
+                        }
+
+                        Button("Refresh") {
+                            viewModel.refreshExternalItems()
+                        }
+                        .disabled(viewModel.mirrorAuthState != .granted)
+                    }
+
+                    if !viewModel.externalLastOperationMessage.isEmpty {
+                        HStack(spacing: 8) {
+                            Text(viewModel.externalLastOperationMessage)
+                                .font(.caption)
+                                .foregroundStyle(viewModel.externalLastOperationIsWarning ? .orange : .green)
+                                .lineLimit(2)
+                            Spacer(minLength: 4)
+                            Button("Clear") {
+                                viewModel.clearExternalStatusMessage()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                        }
+                    }
+
+                    if viewModel.externalItems.isEmpty {
+                        Text(viewModel.mirrorAuthState == .granted ? "No external menu icons detected." : "Grant Accessibility to mirror external icons.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(viewModel.externalItems) { item in
+                                    ExternalIconPreferenceRow(viewModel: viewModel, item: item)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        .frame(maxHeight: 180)
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            GroupBox("Icon Visibility Policy") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(viewModel.icons.sorted(by: { $0.priority > $1.priority })) { icon in
+                        HStack {
+                            Text(icon.title)
+                                .frame(width: 110, alignment: .leading)
+                            Picker("", selection: Binding(
+                                get: { icon.group },
+                                set: { viewModel.setIconGroup(id: icon.id, group: $0) }
+                            )) {
+                                ForEach(VisibilityGroup.allCases) { group in
+                                    Text(group.displayName).tag(group)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            Spacer(minLength: 8)
+                            Text(icon.isVisible ? "Visible" : "Hidden")
+                                .foregroundStyle(icon.isVisible ? Color.green : Color.secondary)
+                                .font(.caption)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            GroupBox("Current Layout") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Screen: \(Int(viewModel.layoutSnapshot.screenWidth))")
+                    Text("Notch Width: \(Int(viewModel.layoutSnapshot.notchWidth))")
+                    Text("Reserved Center: \(Int(viewModel.layoutSnapshot.reservedCenterWidth))")
+                    Text("Side Budget: \(Int(viewModel.layoutSnapshot.sideBudget))")
+                    Text("Spacing: \(String(format: "%.1f", viewModel.layoutSnapshot.spacing))")
+                    Text("External Visible: \(viewModel.externalVisibleItems.count)")
+                    Text("External Overflow: \(viewModel.externalOverflowItems.count)")
+                }
+                .font(.system(.caption, design: .monospaced))
+                .padding(.top, 6)
+            }
+
+            Spacer()
         }
-        .padding()
-        .frame(width: 360)
+        .padding(20)
+    }
+
+    private var authStateLabel: String {
+        switch viewModel.mirrorAuthState {
+        case .unknown:
+            return "Unknown"
+        case .denied:
+            return "Denied"
+        case .granted:
+            return "Granted"
+        }
+    }
+
+    private var authStateColor: Color {
+        switch viewModel.mirrorAuthState {
+        case .unknown:
+            return .secondary
+        case .denied:
+            return .red
+        case .granted:
+            return .green
+        }
+    }
+}
+
+private struct ExternalIconPreferenceRow: View {
+    @ObservedObject var viewModel: MenuBarViewModel
+    let item: ExternalMenuBarItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.displayName)
+                    .lineLimit(1)
+                Text(item.ownerBundleID)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: 210, alignment: .leading)
+
+            Toggle("Pin", isOn: Binding(
+                get: { viewModel.isExternalPinned(itemID: item.id) },
+                set: { viewModel.setExternalItemPinned(itemID: item.id, pinned: $0) }
+            ))
+            .toggleStyle(.checkbox)
+            .frame(width: 55)
+
+            Picker("", selection: Binding(
+                get: { viewModel.externalMode(for: item.id) },
+                set: { viewModel.setExternalItemMode(itemID: item.id, mode: $0) }
+            )) {
+                ForEach(ExternalItemVisibilityMode.allCases) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.menu)
+            .frame(width: 120)
+
+            statusBadge
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        switch viewModel.resolvedExternalState(for: item.id) {
+        case .hiddenApplied:
+            Text("Hidden Applied")
+                .font(.caption2)
+                .foregroundStyle(.green)
+                .lineLimit(1)
+        case .mirrorOnly:
+            Text("Mirror Only")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        case .downgraded(let reason):
+            Text("Downgraded: \(reason.rawValue)")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+        }
     }
 }
