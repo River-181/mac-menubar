@@ -72,6 +72,17 @@ enum NotchDropState: Equatable {
     case failure
 }
 
+enum DropVisualPhase: Equatable {
+    case idle
+    case hoverReveal
+    case dragReveal
+    case tracking
+    case lock(NotchActionKind)
+    case commit(NotchActionKind)
+    case processing
+    case result
+}
+
 enum DropContentKind: String, Equatable {
     case images
     case pdfs

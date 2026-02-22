@@ -172,7 +172,9 @@ final class MenuBarViewModel: ObservableObject {
     @Published var workHubStyle: WorkHubStyle = .magneticDock
     @Published var interactiveMagnetEnabled: Bool = true
     @Published var isDropZoneHovered: Bool = false
+    @Published private(set) var isDropTargetAreaActive: Bool = false
     @Published private(set) var notchDropState: NotchDropState = .idle
+    @Published private(set) var dropVisualPhase: DropVisualPhase = .idle
     @Published private(set) var dragDynamics: DragDynamics = .zero
     @Published private(set) var magnetSnapStrength: CGFloat = 1
     @Published private(set) var droppedFiles: [DroppedFileDescriptor] = []
@@ -197,6 +199,9 @@ final class MenuBarViewModel: ObservableObject {
     @Published private(set) var recommendedDropAction: NotchActionKind?
     @Published private(set) var targetedDropAction: NotchActionKind?
     @Published private(set) var lastReclaimedBytes: Int64 = 0
+
+    private var dropResultResetWorkItem: DispatchWorkItem?
+    private let dropResultVisibleDuration: TimeInterval = 0.82
 
     var visibleIcons: [MenuBarIcon] {
         icons.filter(\.isVisible)
@@ -427,18 +432,26 @@ final class MenuBarViewModel: ObservableObject {
     }
 
     func setDropZoneHover(_ hovering: Bool) {
+        if hovering {
+            cancelDropResultAutoHide()
+        }
+
+        guard isDropZoneHovered != hovering else { return }
         isDropZoneHovered = hovering
         if hovering {
             if dragSession.isFileDrag {
                 if let targetedDropAction {
                     notchDropState = .magnetFocus(targetedDropAction)
+                    dropVisualPhase = .lock(targetedDropAction)
                 } else if notchDropState == .preheat {
                     // Keep preheat briefly to avoid abrupt expansion on fast drags.
                 } else {
                     notchDropState = .predrag
+                    dropVisualPhase = .tracking
                 }
             } else if notchDropState == .idle {
                 notchDropState = .hovering
+                dropVisualPhase = .hoverReveal
             }
             return
         }
@@ -447,10 +460,13 @@ final class MenuBarViewModel: ObservableObject {
             notchDropState = .idle
             notchActionMessage = ""
             notchActionIsError = false
+            dropVisualPhase = .idle
+            cancelDropResultAutoHide()
         }
     }
 
-    func beginDragSession(with urls: [URL]) {
+    func beginDragSession(with urls: [URL], shouldReveal: Bool = true) {
+        cancelDropResultAutoHide()
         dragSession = DragSessionContext(
             isFileDrag: true,
             hoveredAction: nil,
@@ -465,7 +481,14 @@ final class MenuBarViewModel: ObservableObject {
         recommendedDropAction = classification.recommendedAction
         targetedDropAction = nil
         refreshDropCapabilities()
-        notchDropState = .preheat
+        if shouldReveal {
+            notchDropState = .preheat
+            dropVisualPhase = .dragReveal
+        } else {
+            notchDropState = .idle
+            dropVisualPhase = .idle
+            isDropZoneHovered = false
+        }
 
         let capturedEnteredAt = dragSession.enteredAt
         DispatchQueue.main.asyncAfter(deadline: .now() + preheatDuration) { [weak self] in
@@ -473,37 +496,76 @@ final class MenuBarViewModel: ObservableObject {
             guard self.dragSession.isFileDrag else { return }
             guard self.dragSession.enteredAt == capturedEnteredAt else { return }
             guard self.targetedDropAction == nil else { return }
+            if !self.isDropTargetAreaActive {
+                return
+            }
             if case .preheat = self.notchDropState {
                 self.notchDropState = .predrag
+                self.dropVisualPhase = .tracking
             }
         }
     }
 
+    func setDropTargetAreaActive(_ active: Bool) {
+        guard isDropTargetAreaActive != active else { return }
+        isDropTargetAreaActive = active
+        setDropZoneHover(active)
+    }
+
     func updateDragTarget(_ action: NotchActionKind?) {
         guard dragSession.isFileDrag else { return }
+        guard targetedDropAction != action || dragSession.hoveredAction != action else { return }
 
         targetedDropAction = action
-        dragSession.hoveredAction = action
+        if dragSession.hoveredAction != action {
+            dragSession.hoveredAction = action
+        }
 
         if let action {
-            notchDropState = .magnetFocus(action)
+            let nextDropState = NotchDropState.magnetFocus(action)
+            let nextVisualPhase = DropVisualPhase.lock(action)
+            if notchDropState != nextDropState {
+                notchDropState = nextDropState
+            }
+            if dropVisualPhase != nextVisualPhase {
+                dropVisualPhase = nextVisualPhase
+            }
         } else {
-            notchDropState = .predrag
+            if notchDropState != .predrag {
+                notchDropState = .predrag
+            }
+            if dropVisualPhase != .tracking {
+                dropVisualPhase = .tracking
+            }
         }
     }
 
     func updateDragDynamics(_ dynamics: DragDynamics) {
         guard dragSession.isFileDrag else { return }
+        let current = dragDynamics
+        let deltaX = dynamics.lastPoint.x - current.lastPoint.x
+        let deltaY = dynamics.lastPoint.y - current.lastPoint.y
+        let pointDelta = sqrt((deltaX * deltaX) + (deltaY * deltaY))
+        let speedDelta = abs(dynamics.speed - current.speed)
+
+        // Skip near-identical updates to reduce render churn during slow drags.
+        guard pointDelta > 1.5 || speedDelta > 40 else { return }
+
         dragDynamics = dynamics
 
         guard interactiveMagnetEnabled else {
-            magnetSnapStrength = 1
+            if magnetSnapStrength != 1 {
+                magnetSnapStrength = 1
+            }
             return
         }
 
         let speed = min(max(dynamics.speed, 0), 2200)
         let normalized = min(1, speed / 1300)
-        magnetSnapStrength = max(0.38, 1 - (normalized * 0.55))
+        let nextStrength = max(0.38, 1 - (normalized * 0.55))
+        if abs(nextStrength - magnetSnapStrength) > 0.015 {
+            magnetSnapStrength = nextStrength
+        }
     }
 
     func endDragSession() {
@@ -518,10 +580,23 @@ final class MenuBarViewModel: ObservableObject {
                 notchDropState = .idle
                 notchActionMessage = ""
                 notchActionIsError = false
+                dropVisualPhase = .idle
+                cancelDropResultAutoHide()
             } else if isDropZoneHovered {
                 notchDropState = .hovering
+                dropVisualPhase = .hoverReveal
+                cancelDropResultAutoHide()
+            } else {
+                scheduleDropStateAutoHide()
             }
         default:
+            if !isDropZoneHovered, !canUndoLastDangerousAction {
+                dropVisualPhase = .idle
+                scheduleDropStateAutoHide()
+            } else if isDropZoneHovered {
+                dropVisualPhase = .hoverReveal
+                cancelDropResultAutoHide()
+            }
             break
         }
     }
@@ -537,12 +612,15 @@ final class MenuBarViewModel: ObservableObject {
 
         guard !droppedFiles.isEmpty else {
             notchDropState = .failure
+            dropVisualPhase = .result
             setNotchActionMessage("No valid files were dropped.", error: true)
+            scheduleDropStateAutoHide()
             endDragSession()
             return
         }
 
         notchDropState = .hovering
+        dropVisualPhase = .tracking
 
         let selectedAction = preferredAction ?? targetedDropAction ?? classification.recommendedAction
         if instantExecutionEnabled,
@@ -550,6 +628,7 @@ final class MenuBarViewModel: ObservableObject {
            availableDropActions.contains(selectedAction) {
             let committedFiles = droppedFiles
             notchDropState = .dropCommit(selectedAction)
+            dropVisualPhase = .commit(selectedAction)
             DispatchQueue.main.asyncAfter(deadline: .now() + dropCommitDuration) { [weak self] in
                 guard let self else { return }
                 self.performNotchAction(selectedAction, files: committedFiles)
@@ -557,6 +636,7 @@ final class MenuBarViewModel: ObservableObject {
             }
         } else {
             setNotchActionMessage("Choose an action to process \(droppedFiles.count) file(s).", error: false)
+            scheduleDropStateAutoHide()
             endDragSession()
         }
     }
@@ -565,21 +645,27 @@ final class MenuBarViewModel: ObservableObject {
         let inputs = files.isEmpty ? droppedFiles : files
         guard !inputs.isEmpty else {
             notchDropState = .failure
+            dropVisualPhase = .result
             setNotchActionMessage("Drop files first.", error: true)
+            scheduleDropStateAutoHide()
             return
         }
 
         guard availableDropActions.contains(action) else {
             notchDropState = .failure
+            dropVisualPhase = .result
             setNotchActionMessage("Action unavailable for current file type.", error: true)
+            scheduleDropStateAutoHide()
             return
         }
 
         notchDropState = .processing
+        dropVisualPhase = .processing
 
         do {
             let result = try fileActionService.execute(action: action, inputs: inputs, outputPolicy: .sourceDirectory)
             notchDropState = .success
+            dropVisualPhase = .result
             setNotchActionMessage(result.message, error: false)
             lastReclaimedBytes = result.spaceDeltaBytes
 
@@ -589,32 +675,43 @@ final class MenuBarViewModel: ObservableObject {
             }
         } catch {
             notchDropState = .failure
+            dropVisualPhase = .result
             setNotchActionMessage(error.localizedDescription, error: true)
+            scheduleDropStateAutoHide()
         }
+
+        scheduleDropStateAutoHide()
+        endDragSession()
     }
 
     func undoLastDangerousAction() {
         guard let token = lastUndoToken else {
             setNotchActionMessage("No undo history available.", error: true)
             notchDropState = .failure
+            dropVisualPhase = .result
             return
         }
 
         guard canUndoLastDangerousAction else {
             setNotchActionMessage("Undo window expired.", error: true)
             notchDropState = .failure
+            dropVisualPhase = .result
             lastUndoToken = nil
             return
         }
 
         if fileActionService.undo(token: token) {
             notchDropState = .success
+            dropVisualPhase = .result
             setNotchActionMessage("Undo completed.", error: false)
             lastUndoToken = nil
         } else {
             notchDropState = .failure
+            dropVisualPhase = .result
             setNotchActionMessage("Undo failed. Restore manually if needed.", error: true)
         }
+
+        scheduleDropStateAutoHide()
     }
 
     func refreshDropCapabilities() {
@@ -957,6 +1054,36 @@ final class MenuBarViewModel: ObservableObject {
     private func setNotchActionMessage(_ message: String, error: Bool) {
         notchActionMessage = message
         notchActionIsError = error
+        if message.isEmpty {
+            cancelDropResultAutoHide()
+        }
+    }
+
+    private func scheduleDropStateAutoHide() {
+        cancelDropResultAutoHide()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            if self.isDropZoneHovered || self.dragSession.isFileDrag {
+                return
+            }
+            if self.canUndoLastDangerousAction {
+                return
+            }
+
+            self.notchDropState = .idle
+            self.dropVisualPhase = .idle
+            self.notchActionMessage = ""
+            self.notchActionIsError = false
+            self.targetedDropAction = nil
+        }
+        dropResultResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + dropResultVisibleDuration, execute: workItem)
+    }
+
+    private func cancelDropResultAutoHide() {
+        dropResultResetWorkItem?.cancel()
+        dropResultResetWorkItem = nil
     }
 
     private func armUndoExpiry(for token: UndoToken) {

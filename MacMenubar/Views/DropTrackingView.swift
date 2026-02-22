@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct DropTrackingView: NSViewRepresentable {
-    var onDragEntered: ([URL]) -> Void
+    var onDragEntered: (CGPoint, [URL]) -> Void
     var onDragUpdated: (CGPoint, DragDynamics) -> Void
     var onDragExited: () -> Void
     var onPerformDrop: ([URL], CGPoint) -> Void
@@ -25,7 +25,7 @@ struct DropTrackingView: NSViewRepresentable {
 }
 
 final class DropTrackingNSView: NSView {
-    var onDragEntered: (([URL]) -> Void)?
+    var onDragEntered: ((CGPoint, [URL]) -> Void)?
     var onDragUpdated: ((CGPoint, DragDynamics) -> Void)?
     var onDragExited: (() -> Void)?
     var onPerformDrop: (([URL], CGPoint) -> Void)?
@@ -34,8 +34,8 @@ final class DropTrackingNSView: NSView {
     private var lastReportedPoint: CGPoint = .zero
     private var lastReportedTime: CFTimeInterval = 0
     private var lastVelocity: CGPoint = .zero
-    private let minimumUpdateInterval: CFTimeInterval = 1.0 / 30.0
-    private let minimumPointDelta: CGFloat = 1.5
+    private let minimumUpdateInterval: CFTimeInterval = 1.0 / 45.0
+    private let minimumPointDelta: CGFloat = 2.9
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -52,11 +52,11 @@ final class DropTrackingNSView: NSView {
         guard !urls.isEmpty else { return [] }
         currentDragURLs = urls
         hasActiveFileDrag = true
-        onDragEntered?(urls)
         let point = localPoint(from: sender)
         lastReportedPoint = point
         lastReportedTime = CACurrentMediaTime()
         lastVelocity = .zero
+        onDragEntered?(point, urls)
         onDragUpdated?(
             point,
             DragDynamics(

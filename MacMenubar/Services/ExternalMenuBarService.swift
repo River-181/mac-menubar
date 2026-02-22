@@ -108,12 +108,25 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
         let scannedIDs = Set(scanned.map { $0.item.id })
 
         for entry in scanned {
-            let previouslyKnown = cachedItems[entry.item.id] != nil
             var item = entry.item
-            item.isVisibleInSystemBar = true
             item.shelfState = .none
+            item.lastSeenAt = now
+
+            let effectiveMode = modeByID[entry.item.id]
+            if effectiveMode == .mirrorAndHide {
+                item.isVisibleInSystemBar = false
+                hiddenSinceByID[entry.item.id] = hiddenSinceByID[entry.item.id] ?? now
+            } else {
+                item.isVisibleInSystemBar = true
+            }
+
             if let previousItem = lastKnownItems[item.id], item.iconPNGData == nil {
                 item.iconPNGData = previousItem.iconPNGData
+            }
+
+            item.shelfState = .none
+            if effectiveMode == .mirrorAndHide {
+                item.shelfState = .hidden
             }
 
             cachedItems[item.id] = item
@@ -121,13 +134,25 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
             elementByID[item.id] = entry.element
 
             // Re-apply hide only when item re-appears after previously disappearing.
-            if modeByID[item.id] == .mirrorAndHide && !previouslyKnown {
+            if effectiveMode == .mirrorAndHide {
                 _ = actionBridge.setHidden(true, for: entry.element)
             }
         }
 
+        for (itemID, mode) in modeByID where mode == .mirrorAndHide {
+            guard !scannedIDs.contains(itemID) else { continue }
+            guard let snapshot = lastKnownItems[itemID] else { continue }
+            var shelfItem = snapshot
+            shelfItem.isVisibleInSystemBar = false
+            shelfItem.lastSeenAt = now
+            shelfItem.shelfState = .hidden
+            cachedItems[itemID] = shelfItem
+        }
+
         let staleIDs = cachedItems.compactMap { pair in
-            now.timeIntervalSince(pair.value.lastSeenAt) > staleTTL ? pair.key : nil
+            let mode = modeByID[pair.key]
+            guard mode != .mirrorAndHide else { return nil }
+            return now.timeIntervalSince(pair.value.lastSeenAt) > staleTTL ? pair.key : nil
         }
 
         for staleID in staleIDs {
@@ -160,8 +185,21 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
             return ExternalModeUpdateResult(effectiveMode: .mirrorOnly, downgradeReason: nil)
 
         case .mirrorAndHide:
-            guard let element = elementByID[itemID] else {
+            let hasKnownItem = lastKnownItems[itemID] != nil || cachedItems[itemID] != nil
+            guard hasKnownItem else {
                 return ExternalModeUpdateResult(effectiveMode: .mirrorOnly, downgradeReason: .actionFailed)
+            }
+            guard let element = elementByID[itemID] else {
+                modeByID[itemID] = .mirrorAndHide
+                hiddenSinceByID[itemID] = hiddenSinceByID[itemID] ?? .now
+                if var item = cachedItems[itemID] {
+                    item.isVisibleInSystemBar = false
+                    item.shelfState = .hidden
+                    item.lastSeenAt = .now
+                    cachedItems[itemID] = item
+                }
+                publishHiddenShelf(scannedIDs: Set(cachedItems.keys), now: .now)
+                return ExternalModeUpdateResult(effectiveMode: .mirrorAndHide, downgradeReason: nil)
             }
 
             if let reason = actionBridge.setHidden(true, for: element) {
