@@ -140,6 +140,14 @@ final class StatusBarController {
         viewModel.$notchDropState
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
+                self?.updatePanelSuppressionState()
+            }
+            .store(in: &cancellables)
+
+        viewModel.$dropVisualPhase
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.dropZoneController.refreshVisualState()
                 self?.dropZoneController.refreshPosition()
                 self?.updatePanelSuppressionState()
             }
@@ -155,7 +163,6 @@ final class StatusBarController {
         viewModel.$isDropZoneHovered
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                self?.dropZoneController.refreshPosition()
                 self?.updatePanelSuppressionState()
             }
             .store(in: &cancellables)
@@ -489,8 +496,9 @@ final class StatusBarController {
 
     private var isDropInteractionActive: Bool {
         if viewModel.dragSession.isFileDrag { return true }
+        if viewModel.isDropZoneHovered { return true }
         switch viewModel.notchDropState {
-        case .preheat, .predrag, .magnetFocus(_), .dropCommit(_), .processing:
+        case .preheat, .predrag, .hovering, .magnetFocus(_), .dropCommit(_), .processing:
             return true
         default:
             return false
@@ -660,11 +668,9 @@ private final class NotchPanelController {
     private func updateFrame(animated: Bool) {
         guard isShown else { return }
         let target = targetFrame()
-        if animated {
-            panel.animator().setFrame(target, display: true)
-        } else {
-            panel.setFrame(target, display: true)
-        }
+        if panel.frame.equalTo(target) { return }
+        _ = animated
+        panel.setFrame(target, display: false)
     }
 
     private func targetFrame() -> NSRect {
@@ -694,12 +700,13 @@ private final class NotchDropZoneController {
     private let panel: NSPanel
     private let viewModel: MenuBarViewModel
 
-    private let collapsedWidth: CGFloat = 180
-    private let expandedWidth: CGFloat = 460
-    private let collapsedHeight: CGFloat = 16
-    private let expandedHeight: CGFloat = 176
+    private let expandedPanelHeight: CGFloat = 206
+    private let compactPanelHeight: CGFloat = 62
+    private let expandedPanelWidth: CGFloat = 520
+    private let compactPanelWidth: CGFloat = 520
 
     private(set) var isShown: Bool = false
+    private var cachedShadowState: Bool = false
 
     init(viewModel: MenuBarViewModel) {
         self.viewModel = viewModel
@@ -708,7 +715,7 @@ private final class NotchDropZoneController {
         let host = NSHostingController(rootView: content)
 
         panel = NSPanel(
-            contentRect: NSRect(x: 120, y: 120, width: collapsedWidth, height: collapsedHeight),
+            contentRect: NSRect(x: 120, y: 120, width: expandedPanelWidth, height: expandedPanelHeight),
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
@@ -716,9 +723,10 @@ private final class NotchDropZoneController {
         panel.level = .statusBar
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isMovable = false
+        panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentViewController = host
     }
@@ -729,6 +737,7 @@ private final class NotchDropZoneController {
             return
         }
         isShown = true
+        cachedShadowState = false
         refreshPosition()
         panel.orderFrontRegardless()
     }
@@ -741,31 +750,61 @@ private final class NotchDropZoneController {
 
     func refreshPosition() {
         guard isShown else { return }
-        panel.setFrame(targetFrame(), display: true)
+        refreshVisualState()
+        let frame = targetFrame()
+        if frame.equalTo(panel.frame) { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(frame, display: false)
+        }
+    }
+
+    func refreshVisualState() {
+        guard isShown else { return }
+        let shouldShowShadow = isExpanded
+        guard shouldShowShadow != cachedShadowState else { return }
+        cachedShadowState = shouldShowShadow
+        panel.hasShadow = shouldShowShadow
     }
 
     private var isExpanded: Bool {
-        viewModel.isDropZoneHovered || viewModel.notchDropState != .idle
+        switch viewModel.dropVisualPhase {
+        case .hoverReveal:
+            return false
+        case .dragReveal, .tracking, .lock(_), .commit(_), .processing, .result:
+            return true
+        case .idle:
+            return false
+        }
+    }
+
+    private var currentHeight: CGFloat {
+        isExpanded ? expandedPanelHeight : compactPanelHeight
+    }
+
+    private var currentWidth: CGFloat {
+        isExpanded ? expandedPanelWidth : compactPanelWidth
     }
 
     private func targetFrame() -> NSRect {
-        let width = isExpanded ? expandedWidth : collapsedWidth
-        let height = isExpanded ? expandedHeight : collapsedHeight
         guard let screen = NSScreen.main else {
-            return NSRect(x: 120, y: 120, width: width, height: height)
+            return NSRect(
+                x: 120,
+                y: 120,
+                width: currentWidth,
+                height: currentHeight
+            )
         }
 
         let frame = screen.frame
         let visible = screen.visibleFrame
         let hasNotch = viewModel.layoutSnapshot.notchWidth > 0
-        let anchor = HubAnchorCalculator.calculate(
-            screenFrame: frame,
-            visibleFrame: visible,
-            hasNotch: hasNotch,
-            hubHeight: height
-        )
-        let x = anchor.x - (width / 2)
-        let y = anchor.y
-        return NSRect(x: x, y: y, width: width, height: height)
+        let anchorX = hasNotch ? frame.midX : visible.midX
+        let x = anchorX - (currentWidth / 2)
+        let clampedX = max(frame.minX + 8, min(x, frame.maxX - currentWidth - 8))
+        let y = visible.maxY - compactPanelHeight
+        return NSRect(x: clampedX, y: y, width: currentWidth, height: currentHeight)
     }
+
 }
