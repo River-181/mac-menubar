@@ -1,33 +1,83 @@
 # MacMenubar
 
-SwiftUI + AppKit 기반 macOS 메뉴바 전용 유틸리티 앱 예시입니다. MacBook 노치 영역을 고려해 메뉴바 아이콘 레이아웃을 재계산하고, 필요 시 Dynamic Island 스타일 패널을 표시합니다.
+Swift + SwiftUI + AppKit (`NSStatusBar`, `NSStatusItem`) 기반 macOS 메뉴바 전용 유틸리티 앱입니다.
 
-## 구조 (MVVM + AppKit bridge)
+## Features
 
-- `MacMenubar/App.swift`: 앱 진입점, 의존성 주입, 설정 화면
-- `MacMenubar/StatusBarController.swift`: `NSStatusBar`, `NSStatusItem`, 메뉴/패널 제어
-- `MacMenubar/NotchManager.swift`: 노치 안전영역 계산, 화면/활성앱 이벤트 구독
-- `MacMenubar/ViewModel.swift`: 아이콘 우선순위 정책, spacing 계산, 로컬 JSON 할 일 저장
-- `MacMenubar/NotchPanelView.swift`: hover 확장 패널(UI)
+- `LSUIElement=true` 메뉴바 전용 앱 (Dock 아이콘 숨김)
+- 커스텀 앱 아이콘(`AppIcon`) + 브랜드 로고(`BrandLogo`) 포함
+- 노치 영역 인식 후 좌/우 메뉴바 가용폭 계산
+- 동적 spacing + 우선순위 표시 정책
+  - `Always Visible`
+  - `Smart Hide`
+  - `Hidden`
+- AX(Accessibility) 기반 외부 메뉴바 아이콘 미러링
+  - 외부 아이콘 스캔/동기화 (폴링 + 화면 이벤트 반영)
+  - 노치 가용폭 기반 `externalVisibleItems` / `externalOverflowItems` 분리
+  - 외부 오버플로우 메뉴에서 아이콘 액션 전달 (`AXPress` + 좌표 클릭 fallback)
+  - 아이콘별 `Mirror only` / `Mirror + Hide` 모드
+  - `Mirror + Hide` 실패 시 자동 강등 + 원인 표시
+- 노치 드롭 액션 허브 (Hover + Drop 즉시 실행)
+  - 이미지 -> PDF
+  - PDF -> 이미지(페이지별 PNG)
+  - ZIP 압축(`ditto`)
+  - Workbench로 모으기 (`~/Library/Application Support/MacMenubar/Workbench`)
+  - 휴지통 이동 + 8초 Undo
+- 노치 하단 Dynamic Island 스타일 패널
+  - Hover 확장 애니메이션
+  - 미디어 상태 + 재생 제어
+  - 배터리 / CPU / 메모리 표시
+  - 외부 아이콘 strip 표시
+- 라이트/다크/시스템 + Accent 테마
 
-## 핵심 동작
+## Architecture (MVVM)
 
-1. `LSUIElement=true`로 Dock 아이콘을 숨김
-2. 노치 안전영역 + 패딩을 중앙 금지 구역으로 계산
-3. 가용 폭 부족 시 `Always Visible` > `Smart Hide` > `Hidden` 정책으로 표시/숨김 결정
-4. 활성 앱/화면 조건에 따라 아이콘 간 spacing 동적 조정
-5. hover 시 패널 확장 애니메이션 및 다크/라이트 + accent 테마 분기
+- `/Users/river/project/mac-menubar/MacMenubar/App.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/StatusBarController.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/NotchManager.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/ViewModel.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/NotchPanelView.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Views/ExternalIconStripView.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Models/ExternalMenuBarItem.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Accessibility/AXPermissionManager.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Accessibility/AXMenuBarScanner.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Accessibility/AXActionBridge.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Services/SystemMetricsService.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Services/MediaService.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Services/ExternalMenuBarService.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Services/FileActionService.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Services/WorkbenchStore.swift`
+- `/Users/river/project/mac-menubar/MacMenubar/Views/NotchDropZoneView.swift`
 
-## 빌드/실행
+## Build
 
-> 아래 명령은 Xcode 프로젝트(`MacMenubar.xcodeproj`)와 scheme(`MacMenubar`)가 준비된 상태를 기준으로 합니다.
+1. XcodeGen 설치
+
+```bash
+brew install xcodegen
+```
+
+2. Xcode 프로젝트 생성
+
+```bash
+cd /Users/river/project/mac-menubar
+xcodegen generate
+```
+
+3. 빌드
 
 ```bash
 xcodebuild -project MacMenubar.xcodeproj -scheme MacMenubar -configuration Debug -destination 'platform=macOS' build
 ```
 
-Xcode에서 실행 시:
-1. Signing 팀 선택
-2. `Info.plist`의 `LSUIElement`가 `YES`인지 확인
-3. Run 후 메뉴바 아이콘에서 패널 동작 확인
+4. 테스트
 
+```bash
+xcodebuild -project MacMenubar.xcodeproj -scheme MacMenubar -destination 'platform=macOS' test
+```
+
+## Notes
+
+- 캘린더/태스크 저장 기능은 포함하지 않습니다.
+- 외부 아이콘 숨김은 Public API 제약으로 인해 best-effort입니다.
+- App Store 배포 호환성보다 개인/사내 도구 사용을 우선합니다.
