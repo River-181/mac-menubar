@@ -149,8 +149,8 @@ final class ExternalMenuBarService: ExternalMenuBarProviding {
             cachedItems[itemID] = shelfItem
         }
 
-        let staleIDs = cachedItems.compactMap { pair in
-            let mode = modeByID[pair.key]
+        let staleIDs: [String] = cachedItems.compactMap { (pair: Dictionary<String, ExternalMenuBarItem>.Element) -> String? in
+            let mode = modeByID[pair.key] ?? .mirrorOnly
             guard mode != .mirrorAndHide else { return nil }
             return now.timeIntervalSince(pair.value.lastSeenAt) > staleTTL ? pair.key : nil
         }

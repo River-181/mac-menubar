@@ -1,44 +1,48 @@
-name: MacMenubar
+name: NotchDock
 options:
-  minimumXcodeGenVersion: 2.37.0
+  minimumXcodeGenVersion: 2.38.0
+configs:
+  Debug: debug
+  Release: release
 settings:
   base:
-    SWIFT_VERSION: 6.0
+    SWIFT_VERSION: 5.10
     MACOSX_DEPLOYMENT_TARGET: 14.0
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: 2.3.0
 targets:
-  MacMenubar:
+  NotchDock:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
     sources:
-      - path: MacMenubar
-        includes:
-          - "**/*.swift"
-          - "Assets.xcassets/**"
+      - path: NotchDock
     info:
-      path: MacMenubar/Info.plist
+      path: NotchDock/Info.plist
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.river.macmenubar
-        PRODUCT_NAME: MacMenubar
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_KEY_LSUIElement: YES
-        CODE_SIGNING_ALLOWED: NO
+        PRODUCT_BUNDLE_IDENTIFIER: com.river.notchdock
+        PRODUCT_NAME: NotchDock
+        CODE_SIGN_STYLE: Automatic
+    dependencies:
+      - package: KeyboardShortcuts
+        product: KeyboardShortcuts
     scheme:
       testTargets:
-        - MacMenubarTests
-  MacMenubarTests:
+        - NotchDockTests
+  NotchDockTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: Tests
-        includes:
-          - "**/*.swift"
     dependencies:
-      - target: MacMenubar
+      - target: NotchDock
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.river.macmenubar.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.river.notchdock.tests
         GENERATE_INFOPLIST_FILE: YES
-        CODE_SIGNING_ALLOWED: NO
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/NotchDock.app/Contents/MacOS/NotchDock"
