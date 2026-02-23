@@ -1,0 +1,44 @@
+name: MacMenubar
+options:
+  minimumXcodeGenVersion: 2.37.0
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+    MACOSX_DEPLOYMENT_TARGET: 14.0
+targets:
+  MacMenubar:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: MacMenubar
+        includes:
+          - "**/*.swift"
+          - "Assets.xcassets/**"
+    info:
+      path: MacMenubar/Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.river.macmenubar
+        PRODUCT_NAME: MacMenubar
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGNING_ALLOWED: NO
+    scheme:
+      testTargets:
+        - MacMenubarTests
+  MacMenubarTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests
+        includes:
+          - "**/*.swift"
+    dependencies:
+      - target: MacMenubar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.river.macmenubar.tests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: NO
