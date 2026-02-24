@@ -10,17 +10,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let hotkeyService = HotkeyService()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        _ = notification
-        guard !isRunningUnitTests else { return }
+        guard !isRunningUnitTests else {
+            return
+        }
         configureSentryIfPossible()
         let viewModel = NotchDockViewModel.shared
-        let overlay = OverlayWindowController(viewModel: viewModel)
-        overlayController = overlay
-        statusBarController = StatusBarController(viewModel: viewModel, overlayController: overlay)
+        let overlay = OverlayWindowController(viewModel: viewModel, geometry: NotchGeometryCalculator())
+        self.overlayController = overlay
+        self.statusBarController = StatusBarController(viewModel: viewModel, overlayController: overlay)
         hotkeyService.bind(to: viewModel)
+        viewModel.requestExternalPermission()
     }
 
-    @objc func showSettingsWindow(_ sender: Any?) {
+    @objc func openSettingsWindow(_ sender: Any?) {
         _ = sender
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)
@@ -28,15 +30,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let root = SettingsView(viewModel: NotchDockViewModel.shared)
-        let host = NSHostingController(rootView: root)
-        let window = NSWindow(contentViewController: host)
+        let contentView = SettingsView(viewModel: NotchDockViewModel.shared)
+        let hostingController = NSHostingController(rootView: contentView)
+        let window = NSWindow(contentViewController: hostingController)
         window.title = "NotchDock Settings"
         window.styleMask = [.titled, .closable, .miniaturizable]
-        window.setContentSize(NSSize(width: 500, height: 580))
+        window.setContentSize(NSSize(width: 500, height: 620))
         window.isReleasedWhenClosed = false
-        window.delegate = self
         window.center()
+        window.delegate = self
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         settingsWindow = window
@@ -57,10 +59,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureSentryIfPossible() {
         let dsn = (Bundle.main.object(forInfoDictionaryKey: "SENTRY_DSN") as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !dsn.isEmpty else { return }
+        guard !dsn.isEmpty else {
+            return
+        }
+
         SentrySDK.start { options in
             options.dsn = dsn
             options.environment = "development"
+            options.enableAppHangTracking = true
+            options.enableAutoSessionTracking = true
         }
     }
 }

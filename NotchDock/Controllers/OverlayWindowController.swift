@@ -3,31 +3,36 @@ import Combine
 import Darwin
 import os.signpost
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class OverlayWindowController {
     private let viewModel: NotchDockViewModel
     private let geometry: NotchGeometryCalculating
     private let panel: NSPanel
-    private var trackingTimer: Timer?
-    private var perfTimer: Timer?
-    private var localKeyMonitor: Any?
-    private var policyObserver: AnyCancellable?
-    private var lastMouseLocation: CGPoint?
-    private var lastSampleTimestamp: TimeInterval?
-    private var panelInteractionEnabled = false
-    private var samplingMode: PointerSamplingMode = .armed
-    private var samplingInterval: TimeInterval = 0.06
-    private let signpostLog = OSLog(subsystem: "com.river.notchdock", category: "overlay")
-    private var lastCPUSample: (cpuSeconds: Double, wallTime: TimeInterval)?
+    private let dragPipeline: DragPipelining
+    private let hitMask = HitMaskEngine()
 
-    init(viewModel: NotchDockViewModel, geometry: NotchGeometryCalculating = NotchGeometryCalculator()) {
+    private var samplingMode: PointerSamplingMode = .armed
+    private var samplingTimer: Timer?
+    private var stateObserver: AnyCancellable?
+    private var perfTimer: Timer?
+    private var lastCPUSample: (cpuSeconds: Double, wall: TimeInterval)?
+    private var dragDetectedUntil: TimeInterval = 0
+    private let signpostLog = OSLog(subsystem: "com.river.notchdock", category: "overlay")
+
+    init(
+        viewModel: NotchDockViewModel,
+        geometry: NotchGeometryCalculating = NotchGeometryCalculator(),
+        dragPipeline: DragPipelining = DragPipeline()
+    ) {
         self.viewModel = viewModel
         self.geometry = geometry
+        self.dragPipeline = dragPipeline
 
-        let initialSize = DockOverlayState.workspace.panelFrameSize
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: initialSize.width, height: initialSize.height),
+        let initialSize = OverlayState.armed.panelSize
+        panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -38,290 +43,249 @@ final class OverlayWindowController {
         panel.hidesOnDeactivate = false
         panel.isFloatingPanel = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        panel.hasShadow = false
-        panel.isOpaque = false
         panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        panel.acceptsMouseMovedEvents = true
 
-        let hostingView = NSHostingView(rootView: OverlayRootView(viewModel: viewModel))
-        hostingView.frame = panel.contentRect(forFrameRect: panel.frame)
-        hostingView.autoresizingMask = [.width, .height]
-        hostingView.translatesAutoresizingMaskIntoConstraints = true
-        panel.contentView = hostingView
-        self.panel = panel
-
-        layoutPanel()
+        let host = NSHostingView(rootView: OverlayRootView(viewModel: viewModel))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        let container = OverlayPassThroughContainerView(
+            frame: panel.contentRect(forFrameRect: panel.frame)
+        ) { [weak self] pointInWindow in
+            guard let self else { return false }
+            guard !self.panel.ignoresMouseEvents else { return false }
+            let screenPoint = self.panel.convertToScreen(
+                NSRect(origin: pointInWindow, size: .zero)
+            ).origin
+            guard let screen = self.panel.screen ?? NSScreen.main else { return false }
+            let snapshot = self.geometry.layoutSnapshot(screen: screen)
+            return self.hitMask.isInsideCapsule(
+                point: screenPoint,
+                panelFrame: self.panel.frame,
+                state: self.viewModel.overlayState,
+                hasNotch: snapshot.hasNotch,
+                notchWidth: snapshot.notchWidth
+            )
+        }
+        container.addSubview(host)
+        NSLayoutConstraint.activate([
+            host.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            host.topAnchor.constraint(equalTo: container.topAnchor),
+            host.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
+        panel.contentView = container
         panel.orderFrontRegardless()
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleScreenChange),
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        policyObserver = viewModel.$notchDefaultPolicy
+        stateObserver = viewModel.$overlayState
             .removeDuplicates()
             .sink { [weak self] _ in
                 self?.layoutPanel()
             }
 
-        setSamplingMode(.idle)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleScreenChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+
+        setSamplingMode(.armed)
         startPerfSampling()
-        installKeyMonitor()
+        layoutPanel()
     }
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        trackingTimer?.invalidate()
+        samplingTimer?.invalidate()
         perfTimer?.invalidate()
-        if let localKeyMonitor {
-            NSEvent.removeMonitor(localKeyMonitor)
-        }
-    }
-
-    @objc private func handleScreenChange() {
-        layoutPanel()
-    }
-
-    func layoutPanel() {
-        guard let screen = NSScreen.main else { return }
-        // Keep a stable panel frame and animate content inside SwiftUI.
-        // This avoids AppKit update-constraints loops from rapid frame mutation.
-        let frame = geometry.capsuleFrame(
-            screen: screen,
-            visualState: .workspace,
-            policy: viewModel.notchDefaultPolicy,
-            compactOverride: nil
-        )
-        if !panel.frame.equalTo(frame) {
-            panel.setFrame(frame, display: true)
-        }
-        viewModel.refreshLayout(for: screen)
     }
 
     func toggleExpand() {
         viewModel.toggleExpand()
     }
 
-    func setSamplingMode(_ mode: PointerSamplingMode) {
+    @objc private func handleScreenChanged() {
+        layoutPanel()
+    }
+
+    private func layoutPanel() {
+        guard let screen = NSScreen.main else { return }
+        let frame = geometry.panelFrame(screen: screen, state: viewModel.overlayState)
+        if !panel.frame.equalTo(frame) {
+            panel.setFrame(frame, display: false)
+        }
+    }
+
+    private func setSamplingMode(_ mode: PointerSamplingMode) {
         guard samplingMode != mode else { return }
         samplingMode = mode
         recordPerfSignpost("sampling.\(mode.rawValue)")
         rebuildTrackingPipelineIfNeeded()
     }
 
-    func rebuildTrackingPipelineIfNeeded() {
-        let nextInterval = interval(for: samplingMode)
-        if abs(nextInterval - samplingInterval) < 0.001, trackingTimer != nil {
-            return
-        }
-        samplingInterval = nextInterval
-        trackingTimer?.invalidate()
-        trackingTimer = Timer.scheduledTimer(withTimeInterval: nextInterval, repeats: true) { [weak self] _ in
+    private func rebuildTrackingPipelineIfNeeded() {
+        let interval = intervalForSamplingMode(samplingMode)
+        samplingTimer?.invalidate()
+        samplingTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                self.sampleTopTrigger()
+                self.sample()
             }
         }
-        trackingTimer?.tolerance = max(0.01, nextInterval * 0.35)
+        samplingTimer?.tolerance = max(0.01, interval * 0.35)
     }
 
-    private func sampleTopTrigger() {
+    private func sample() {
         guard let screen = NSScreen.main else { return }
-        let mouse = NSEvent.mouseLocation
-        let timestamp = Date().timeIntervalSinceReferenceDate
-        let velocity = computeVelocity(for: mouse, timestamp: timestamp)
-        let distance: CGFloat
-        if let lastMouseLocation {
-            distance = hypot(mouse.x - lastMouseLocation.x, mouse.y - lastMouseLocation.y)
-        } else {
-            distance = .greatestFiniteMagnitude
-        }
-        let mouseMovedEnough = distance > 1.5
-        let dragActive = (NSEvent.pressedMouseButtons & 1) == 1
+        let now = Date().timeIntervalSinceReferenceDate
+        let point = NSEvent.mouseLocation
+        let telemetry = dragPipeline.ingest(point: point, timestamp: now)
+        let snapshot = geometry.layoutSnapshot(screen: screen)
 
-        if !mouseMovedEnough
-            && !dragActive
-            && viewModel.overlayState == .idle
-            && !viewModel.isNearTopTrigger
-            && viewModel.triggerState == .outside {
-            setPanelInteractionEnabled(false)
-            setSamplingMode(.idle)
-            return
-        }
+        let isFileDrag = isFileDragInProgress(now: now)
+        let isCapsuleInside = hitMask.isInsideCapsule(
+            point: point,
+            panelFrame: panel.frame,
+            state: viewModel.overlayState,
+            hasNotch: snapshot.hasNotch,
+            notchWidth: snapshot.notchWidth
+        )
+        let isTriggerInside = snapshot.triggerFrame.contains(point)
+        let isOuterInside = snapshot.triggerOuterFrame.contains(point)
 
-        lastMouseLocation = mouse
-        let trigger = geometry.triggerZone(screen: screen)
-        let insideCapsule = isPointInsideCapsule(mouse)
-        let rawInsideTrigger = trigger.contains(mouse)
+        let shouldIntercept = isCapsuleInside || (isFileDrag && isTriggerInside)
+        panel.ignoresMouseEvents = !shouldIntercept
 
-        // Keep passthrough outside the visual capsule, but allow notch-top drag entry.
-        setPanelInteractionEnabled(insideCapsule || rawInsideTrigger)
         viewModel.ingestPointerSample(
-            DragTelemetry(point: mouse, velocity: velocity, timestamp: timestamp),
-            isTriggerRawInside: rawInsideTrigger,
-            isCapsuleInside: insideCapsule,
-            isDragging: dragActive
+            telemetry,
+            isTriggerRawInside: isTriggerInside,
+            isTriggerOuterInside: isOuterInside,
+            isCapsuleInside: isCapsuleInside,
+            isDragging: isFileDrag
         )
 
-        if dragActive {
+        if isFileDrag {
             setSamplingMode(.drag)
-        } else if insideCapsule || rawInsideTrigger || viewModel.overlayState != .idle || viewModel.triggerState != .outside {
+        } else if isOuterInside || viewModel.overlayState != .hidden {
             setSamplingMode(.armed)
         } else {
             setSamplingMode(.idle)
+            dragPipeline.reset()
         }
     }
 
-    private func interval(for mode: PointerSamplingMode) -> TimeInterval {
+    private func isFileDragInProgress(now: TimeInterval) -> Bool {
+        let dragPasteboard = NSPasteboard(name: .drag)
+        let canReadURL = dragPasteboard.canReadObject(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        )
+        let hasTypeHint = hasFileDragType(in: dragPasteboard)
+        let detected = canReadURL || hasTypeHint
+        if detected {
+            dragDetectedUntil = now + 0.20
+            return true
+        }
+        return now <= dragDetectedUntil
+    }
+
+    private func hasFileDragType(in pasteboard: NSPasteboard) -> Bool {
+        guard let types = pasteboard.types else { return false }
+        let rawTypes = Set(types.map(\.rawValue))
+        let hints: [String] = [
+            NSPasteboard.PasteboardType.fileURL.rawValue,
+            UTType.fileURL.identifier,
+            "NSFilenamesPboardType",
+            "public.url",
+            "com.apple.pasteboard.promised-file-url"
+        ]
+        return hints.contains(where: rawTypes.contains)
+    }
+
+    private func intervalForSamplingMode(_ mode: PointerSamplingMode) -> TimeInterval {
         switch mode {
         case .idle:
-            return 0.18
+            0.18
         case .armed:
-            return 0.06
+            0.06
         case .drag:
-            return 0.03
+            0.03
         }
-    }
-
-    private func computeVelocity(for mouse: CGPoint, timestamp: TimeInterval) -> CGVector {
-        guard let previousPoint = lastMouseLocation, let previousTimestamp = lastSampleTimestamp else {
-            lastSampleTimestamp = timestamp
-            return .zero
-        }
-        let delta = max(0.0001, timestamp - previousTimestamp)
-        lastSampleTimestamp = timestamp
-        return CGVector(
-            dx: (mouse.x - previousPoint.x) / delta,
-            dy: (mouse.y - previousPoint.y) / delta
-        )
     }
 
     func recordPerfSignpost(_ name: String) {
-        os_signpost(.event, log: signpostLog, name: "OverlayPerf", "%{public}s", name)
+        os_signpost(.event, log: signpostLog, name: "Overlay", "%{public}s", name)
     }
 
     private func startPerfSampling() {
         perfTimer?.invalidate()
-        perfTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        perfTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
                 self.sampleIdleCPU()
             }
         }
-        perfTimer?.tolerance = 0.6
+        perfTimer?.tolerance = 0.5
     }
 
     private func sampleIdleCPU() {
-        guard viewModel.overlayState == .idle else {
+        guard viewModel.overlayState == .hidden else {
+            lastCPUSample = nil
             return
         }
-        guard let cpuSeconds = currentProcessCPUSeconds() else {
-            return
-        }
+        guard let cpu = currentCPUSeconds() else { return }
         let now = Date().timeIntervalSinceReferenceDate
-        defer {
-            lastCPUSample = (cpuSeconds: cpuSeconds, wallTime: now)
+        defer { lastCPUSample = (cpu, now) }
+        guard let last = lastCPUSample else { return }
+        let wallDelta = max(0.001, now - last.wall)
+        let cpuDelta = max(0, cpu - last.cpuSeconds)
+        let percent = (cpuDelta / wallDelta) * 100
+        viewModel.updateIdleCPU(percent: percent)
+        if percent > 4.5 {
+            recordPerfSignpost("idleCPU.high.\(percent)")
         }
-        guard let last = lastCPUSample else {
-            return
-        }
-        let deltaWall = now - last.wallTime
-        guard deltaWall > 0 else {
-            return
-        }
-        let deltaCPU = max(0, cpuSeconds - last.cpuSeconds)
-        let usagePercent = (deltaCPU / deltaWall) * 100
-        viewModel.updateIdleCPU(usagePercent)
     }
 
-    private func currentProcessCPUSeconds() -> Double? {
+    private func currentCPUSeconds() -> Double? {
         var info = task_thread_times_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_thread_times_info_data_t>.size / MemoryLayout<natural_t>.size)
         let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { reboundPointer in
-                task_info(
-                    mach_task_self_,
-                    task_flavor_t(TASK_THREAD_TIMES_INFO),
-                    reboundPointer,
-                    &count
-                )
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
+                task_info(mach_task_self_, task_flavor_t(TASK_THREAD_TIMES_INFO), rebound, &count)
             }
         }
-        guard result == KERN_SUCCESS else {
-            return nil
-        }
-
+        guard result == KERN_SUCCESS else { return nil }
         let user = Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
         let system = Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
         return user + system
     }
+}
 
-    private func setPanelInteractionEnabled(_ enabled: Bool) {
-        guard panelInteractionEnabled != enabled else { return }
-        panelInteractionEnabled = enabled
-        panel.ignoresMouseEvents = !enabled
+enum PointerSamplingMode: String {
+    case idle
+    case armed
+    case drag
+}
+
+private final class OverlayPassThroughContainerView: NSView {
+    private let shouldHandlePoint: (CGPoint) -> Bool
+
+    init(frame: CGRect, shouldHandlePoint: @escaping (CGPoint) -> Bool) {
+        self.shouldHandlePoint = shouldHandlePoint
+        super.init(frame: frame)
     }
 
-    private func isPointInsideCapsule(_ point: CGPoint) -> Bool {
-        let capsuleRect = geometry.hitMaskRect(for: viewModel.overlayState, panelFrame: panel.frame)
-
-        if capsuleRect.width <= 0 || capsuleRect.height <= 0 || !capsuleRect.contains(point) {
-            return false
-        }
-
-        let radius = capsuleRect.height / 2
-        let centerBand = CGRect(
-            x: capsuleRect.minX + radius,
-            y: capsuleRect.minY,
-            width: max(0, capsuleRect.width - (radius * 2)),
-            height: capsuleRect.height
-        )
-        if centerBand.contains(point) {
-            return true
-        }
-
-        let leftCenter = CGPoint(x: capsuleRect.minX + radius, y: capsuleRect.midY)
-        let rightCenter = CGPoint(x: capsuleRect.maxX - radius, y: capsuleRect.midY)
-        let leftDistance = hypot(point.x - leftCenter.x, point.y - leftCenter.y)
-        let rightDistance = hypot(point.x - rightCenter.x, point.y - rightCenter.y)
-        return leftDistance <= radius || rightDistance <= radius
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
-    private func installKeyMonitor() {
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            if self.handleKey(event) {
-                return nil
-            }
-            return event
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard shouldHandlePoint(point) else {
+            return nil
         }
-    }
-
-    private func handleKey(_ event: NSEvent) -> Bool {
-        let optionPressed = event.modifierFlags.contains(.option)
-        switch (event.keyCode, optionPressed) {
-        case (49, true): // Option + Space
-            viewModel.toggleExpand()
-            return true
-        case (36, true): // Option + Return
-            viewModel.toggleWorkspace(trigger: .hotkey)
-            return true
-        case (53, _): // Escape
-            viewModel.closeOneLevel()
-            return true
-        case (123, true): // Option + Left
-            viewModel.focusPreviousGroup()
-            return true
-        case (124, true): // Option + Right
-            viewModel.focusNextGroup()
-            return true
-        case (44, true): // Option + /
-            return true
-        default:
-            return false
-        }
+        return super.hitTest(point)
     }
 }

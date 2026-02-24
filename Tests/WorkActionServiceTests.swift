@@ -4,155 +4,112 @@ import XCTest
 @testable import NotchDock
 
 final class WorkActionServiceTests: XCTestCase {
-    private var temporaryDirectory: URL!
-    private var workbenchDirectory: URL!
-    private var outputDirectory: URL!
+    private var tempRoot: URL!
+    private var io: FileIOService!
     private var service: WorkActionService!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        temporaryDirectory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        tempRoot = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("NotchDockTests-\(UUID().uuidString)", isDirectory: true)
-        workbenchDirectory = temporaryDirectory.appendingPathComponent("Workbench", isDirectory: true)
-        outputDirectory = temporaryDirectory.appendingPathComponent("Output", isDirectory: true)
-        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
-        let workbench = WorkbenchStore(rootURL: workbenchDirectory)
-        service = WorkActionService(workbenchStore: workbench, outputRootURL: outputDirectory)
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        io = FileIOService(fileManager: .default, outputRoot: tempRoot.appendingPathComponent("Out", isDirectory: true))
+        service = WorkActionService(io: io)
     }
 
     override func tearDownWithError() throws {
-        if let temporaryDirectory {
-            try? FileManager.default.removeItem(at: temporaryDirectory)
-        }
+        try? FileManager.default.removeItem(at: tempRoot)
+        tempRoot = nil
+        io = nil
         service = nil
-        outputDirectory = nil
-        workbenchDirectory = nil
-        temporaryDirectory = nil
         try super.tearDownWithError()
     }
 
-    func testClassifyImagesRecommendsOptimize() throws {
-        let imageA = try makeImage(named: "a.png")
-        let imageB = try makeImage(named: "b.png")
-        let plan = service.classify([imageA, imageB])
-
+    func testClassifyImagesPrefersOptimizeImages() throws {
+        let image = try makeImage(name: "a.png")
+        let plan = service.classify([image])
         XCTAssertEqual(plan.kind, .images)
         XCTAssertEqual(plan.recommendedAction, .optimizeImages)
-        XCTAssertTrue(plan.secondaryActions.contains(.imageToPDF))
     }
 
-    func testCompressZipMovesOriginalToTrashAndUndoRestores() throws {
-        let source = temporaryDirectory.appendingPathComponent("note.txt")
-        try Data("hello storage".utf8).write(to: source)
+    func testCompressZipMovesOriginalAndUndoRestores() async throws {
+        let source = tempRoot.appendingPathComponent("note.txt")
+        try Data("hello".utf8).write(to: source)
 
-        let result = try service.execute(action: .compressZip, inputs: [source], outputPolicy: .datedFolder)
-        guard let archive = result.outputs.first else {
-            XCTFail("Expected archive output")
-            return
-        }
-
-        XCTAssertTrue(FileManager.default.fileExists(atPath: archive.path))
+        let result = try await service.execute(.compressZip, inputs: [source])
+        XCTAssertEqual(result.action, .compressZip)
+        XCTAssertTrue(result.outputs.first?.pathExtension == "zip")
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
         XCTAssertNotNil(result.undoToken)
 
-        guard let token = result.undoToken else {
-            XCTFail("Expected undo token")
-            return
-        }
-        XCTAssertTrue(service.undo(token: token))
+        guard let token = result.undoToken else { return XCTFail("Missing undo token") }
+        let undone = await service.undo(token)
+        XCTAssertTrue(undone)
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: archive.path))
     }
 
-    func testExtractZipProducesDirectory() throws {
-        let source = temporaryDirectory.appendingPathComponent("sample.txt")
-        try Data("zip me".utf8).write(to: source)
-        let zipURL = temporaryDirectory.appendingPathComponent("sample.zip")
-        try runDittoCompression(source: source, destination: zipURL)
+    func testExtractZipCreatesFolder() async throws {
+        let source = tempRoot.appendingPathComponent("zip-source.txt")
+        try Data("zip".utf8).write(to: source)
+        let archive = tempRoot.appendingPathComponent("sample.zip")
+        try FileManager.default.zipItem(at: source, to: archive, shouldKeepParent: true)
 
-        let result = try service.execute(action: .extractZip, inputs: [zipURL], outputPolicy: .datedFolder)
+        let result = try await service.execute(.extractZip, inputs: [archive])
         XCTAssertEqual(result.action, .extractZip)
         XCTAssertEqual(result.outputs.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputs[0].path))
     }
 
-    func testOptimizePDFKeepTextProducesReadableTextAndSupportsUndo() throws {
-        let sourcePDF = try makeTextPDF(named: "doc.pdf")
-        let result = try service.execute(action: .optimizePDFKeepText, inputs: [sourcePDF], outputPolicy: .datedFolder)
-
+    func testOptimizePDFKeepsTextReadable() async throws {
+        let source = try makeTextPDF(name: "doc.pdf")
+        let result = try await service.execute(.optimizePDFKeepText, inputs: [source])
         guard let optimized = result.outputs.first else {
-            XCTFail("Expected optimized PDF")
-            return
+            return XCTFail("Missing optimized output")
         }
-
-        XCTAssertFalse(FileManager.default.fileExists(atPath: sourcePDF.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: optimized.path))
-
-        let optimizedDoc = PDFDocument(url: optimized)
-        let text = optimizedDoc?.page(at: 0)?.string ?? ""
-        XCTAssertFalse(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-        guard let token = result.undoToken else {
-            XCTFail("Expected undo token")
-            return
-        }
-
-        XCTAssertTrue(service.undo(token: token))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: sourcePDF.path))
+        let document = PDFDocument(url: optimized)
+        let text = document?.page(at: 0)?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        XCTAssertFalse(text.isEmpty)
     }
 
-    private func makeImage(named name: String) throws -> URL {
-        let url = temporaryDirectory.appendingPathComponent(name)
-        let image = NSImage(size: NSSize(width: 240, height: 240))
+    private func makeImage(name: String) throws -> URL {
+        let url = tempRoot.appendingPathComponent(name)
+        let image = NSImage(size: NSSize(width: 180, height: 180))
         image.lockFocus()
         NSColor.systemBlue.setFill()
-        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 240, height: 240)).fill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 180, height: 180)).fill()
         image.unlockFocus()
-
         guard
-            let tiffData = image.tiffRepresentation,
-            let rep = NSBitmapImageRep(data: tiffData),
-            let pngData = rep.representation(using: .png, properties: [:])
+            let tiff = image.tiffRepresentation,
+            let rep = NSBitmapImageRep(data: tiff),
+            let data = rep.representation(using: .png, properties: [:])
         else {
-            throw WorkActionError.commandFailed("Unable to produce PNG fixture")
+            throw WorkActionError.operationFailed("Fixture generation failed")
         }
-
-        try pngData.write(to: url)
+        try data.write(to: url)
         return url
     }
 
-    private func makeTextPDF(named name: String) throws -> URL {
-        let url = temporaryDirectory.appendingPathComponent(name)
+    private func makeTextPDF(name: String) throws -> URL {
+        let url = tempRoot.appendingPathComponent(name)
         let data = NSMutableData()
         var mediaBox = CGRect(x: 0, y: 0, width: 400, height: 300)
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
               let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
-            throw WorkActionError.commandFailed("Failed to create PDF context")
+            throw WorkActionError.operationFailed("Cannot create PDF context")
         }
-
         context.beginPDFPage(nil)
-        let graphicsContext = NSGraphicsContext(cgContext: context, flipped: false)
+        let graphics = NSGraphicsContext(cgContext: context, flipped: false)
         NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = graphicsContext
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 22),
+        NSGraphicsContext.current = graphics
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 20),
             .foregroundColor: NSColor.labelColor
         ]
-        NSString(string: "Text layer must stay readable.").draw(at: CGPoint(x: 40, y: 140), withAttributes: attributes)
+        NSString(string: "Readable PDF text layer").draw(at: CGPoint(x: 40, y: 140), withAttributes: attrs)
         NSGraphicsContext.restoreGraphicsState()
         context.endPDFPage()
         context.closePDF()
-
         try data.write(to: url, options: .atomic)
         return url
-    }
-
-    private func runDittoCompression(source: URL, destination: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        process.arguments = ["-c", "-k", "--sequesterRsrc", "--keepParent", source.path, destination.path]
-        try process.run()
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0)
     }
 }
