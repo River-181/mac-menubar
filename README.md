@@ -1,22 +1,23 @@
 # NotchDock
 
-NotchDock is a fresh rewrite focused on one thing: a notch-linked, tactile overlay dock that keeps the macOS menu bar compact and visually clean.
+NotchDock v1 hard reset focuses on a stable notch drag hub first.
 
-## Project Reset
-
-- Previous implementation is archived at:
-  - `/Users/river/project/mac-menubar/archive/mac-menubar-legacy-v1`
-- New app root:
-  - `/Users/river/project/mac-menubar/NotchDock`
-
-## Current Scope (v0 scaffold)
+## Current Scope (v1)
 
 - LSUIElement menu bar app (Dock icon hidden)
-- Top-center overlay capsule with state machine:
-  - `idle -> peek -> expand -> workspace`
-- Status bar control (left click toggle, right click menu)
-- Basic icon strip model (`Pinned` + `Shelf`)
-- Basic settings scene (policy + motion toggles)
+- Strict notch trigger overlay:
+  - `hidden -> armed -> peek -> expand -> processing`
+- Pass-through panel behavior:
+  - mouse interaction is captured only inside capsule/hit-mask
+- Drag hub with 9 actions:
+  - `imageToPDF`, `pdfToImages`, `compressZip`, `extractZip`, `optimizeImages`, `optimizePDFKeepText`, `resizeImages`, `sendToWorkbench`, `moveToTrash`
+- Undo for dangerous actions (8 seconds)
+- Icon policy:
+  - core icons + user selection only (`Pinned/Shelf/Overflow`)
+- Explicitly removed from v1:
+  - Workspace canvas
+  - AX external icon mirroring/hiding
+  - running apps bulk auto-collection
 
 ## Build
 
@@ -30,17 +31,20 @@ xcodebuild -project NotchDock.xcodeproj -scheme NotchDock -destination 'platform
 
 ## External Packages
 
-- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts): global hotkeys for overlay/workspace/group navigation.
+- [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts): toggle hotkey.
+- [Defaults](https://github.com/sindresorhus/Defaults): selected icon persistence.
+- [ZIPFoundation](https://github.com/weichsel/ZIPFoundation): in-app ZIP/extract engine foundation.
+- [swift-snapshot-testing](https://github.com/pointfreeco/swift-snapshot-testing): snapshot-based UI regression testing.
+- [sentry-cocoa](https://github.com/getsentry/sentry-cocoa): crash/performance reporting pipeline.
+- [LaunchAtLogin-Modern](https://github.com/sindresorhus/LaunchAtLogin-Modern): login-item management.
 
-## Phase Plan (A -> E)
+## Optional Runtime Configuration
 
-- Phase A: dependencies + hotkey infrastructure
-- Phase B: top-trigger/drag stability + energy optimization
-- Phase C: icon dock behavior polish (group cycle/filter)
-- Phase D: work-action execution responsiveness and reliability
-- Phase E: docs/tests/review loop and repeat
+- `SENTRY_DSN` (`/Users/river/project/mac-menubar/NotchDock/Info.plist`): set a real DSN to enable Sentry reporting.
 
 ## Notes
 
-- This reset intentionally starts from a clean architecture baseline.
-- The full interaction spec is tracked in `/Users/river/project/mac-menubar/spec.md`.
+- Previous code snapshots:
+  - `/Users/river/project/mac-menubar/archive/mac-menubar-legacy-v1`
+  - `/Users/river/project/mac-menubar/archive/notchdock-pre-rebuild-v1/NotchDock`
+- Full product spec is tracked in `/Users/river/project/mac-menubar/spec.md`.

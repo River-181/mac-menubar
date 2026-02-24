@@ -1,66 +1,32 @@
 import XCTest
 @testable import NotchDock
 
-final class IconDockServiceTests: XCTestCase {
-    func testPinnedItemsRankAboveShelf() {
-        let service = IconDockService()
-        let now = Date()
-        let pinned = DockIcon(
-            id: "p",
-            source: .manual,
-            symbolOrImage: "wifi",
-            title: "Pinned",
-            bucket: .pinned,
-            groupID: "System",
-            lastUsedAt: now.addingTimeInterval(-500),
-            rank: 0.1
-        )
-        let shelf = DockIcon(
-            id: "s",
-            source: .manual,
-            symbolOrImage: "terminal",
-            title: "Shelf",
-            bucket: .shelf,
-            groupID: "Dev",
-            lastUsedAt: now,
-            rank: 1.0
-        )
-
-        let sorted = service.sort([shelf, pinned], now: now)
-        XCTAssertEqual(sorted.first?.id, "p")
+final class IconPolicyEngineTests: XCTestCase {
+    func testPinnedIsPrioritized() {
+        let engine = IconPolicyEngine()
+        let icons = [
+            DockIcon(id: "shelf", title: "Shelf", symbolName: "terminal", bucket: .shelf, rank: 1, isEnabled: true),
+            DockIcon(id: "pinned", title: "Pinned", symbolName: "wifi", bucket: .pinned, rank: 5, isEnabled: true)
+        ]
+        let result = engine.arrange(icons: icons, state: .peek)
+        XCTAssertEqual(result.visible.first?.id, "pinned")
     }
 
-    func testOverflowAppearsWhenCapacityIsExceeded() {
-        let service = IconDockService()
-        let now = Date()
-        let pinned = (0..<3).map { index in
+    func testOverflowWhenExpandedLimitExceeded() {
+        let engine = IconPolicyEngine()
+        let icons = (0..<20).map {
             DockIcon(
-                id: "p\(index)",
-                source: .manual,
-                symbolOrImage: "wifi",
-                title: "Pinned \(index)",
-                bucket: .pinned,
-                groupID: "System",
-                lastUsedAt: now,
-                rank: 1.0
+                id: "icon-\($0)",
+                title: "Icon \($0)",
+                symbolName: "circle",
+                bucket: $0 < 4 ? .pinned : .shelf,
+                rank: $0,
+                isEnabled: true
             )
         }
-        let shelf = (0..<8).map { index in
-            DockIcon(
-                id: "s\(index)",
-                source: .manual,
-                symbolOrImage: "terminal",
-                title: "Shelf \(index)",
-                bucket: .shelf,
-                groupID: "Dev",
-                lastUsedAt: now,
-                rank: Double(index)
-            )
-        }
-
-        let arranged = service.arrange(pinned: pinned, shelf: shelf, state: .peek)
-        XCTAssertEqual(arranged.visible.count, 7)
-        XCTAssertEqual(arranged.overflow.count, 4)
-        XCTAssertTrue(arranged.overflow.allSatisfy { $0.bucket == .overflow })
+        let result = engine.arrange(icons: icons, state: .expand)
+        XCTAssertEqual(result.visible.count, 14)
+        XCTAssertEqual(result.overflow.count, 6)
+        XCTAssertTrue(result.overflow.allSatisfy { $0.bucket == .overflow })
     }
 }

@@ -1,70 +1,54 @@
-import SwiftUI
 import KeyboardShortcuts
+import LaunchAtLogin
+import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: NotchDockViewModel
 
     var body: some View {
         Form {
-            Section("Menu Bar Compaction") {
-                Picker("Default Policy", selection: Binding(
-                    get: { viewModel.notchDefaultPolicy },
-                    set: { viewModel.setPolicy($0) }
-                )) {
-                    ForEach(NotchDefaultPolicy.allCases) { policy in
-                        Text(policy.title).tag(policy)
-                    }
-                }
-                Text("Effective spacing: \(viewModel.effectiveSpacing, specifier: "%.1f")pt")
+            Section("Trigger") {
+                Text("The overlay opens only when pointer enters the strict notch trigger zone.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Text("Enter 35ms · Exit 100ms · Collapse grace 450ms")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Work Hub Motion") {
-                Toggle("Interactive magnet", isOn: Binding(
-                    get: { viewModel.enableInteractiveMagnet },
-                    set: { viewModel.setInteractiveMagnet($0) }
-                ))
-
-                Toggle("Reduce motion", isOn: Binding(
-                    get: { viewModel.reduceMotionEnabled },
-                    set: { viewModel.setReduceMotion($0) }
-                ))
+            Section("Visible Icons") {
+                ForEach(viewModel.candidateIcons) { icon in
+                    Toggle(
+                        icon.title,
+                        isOn: Binding(
+                            get: { viewModel.selectedIconIDs.contains(icon.id) },
+                            set: { viewModel.setIconEnabled(icon.id, enabled: $0) }
+                        )
+                    )
+                }
             }
 
-            Section("Keyboard Shortcuts") {
-                KeyboardShortcuts.Recorder("Toggle Expand", name: .toggleExpand)
-                KeyboardShortcuts.Recorder("Toggle Workspace", name: .toggleWorkspace)
-                KeyboardShortcuts.Recorder("Next Group", name: .nextGroup)
-                KeyboardShortcuts.Recorder("Previous Group", name: .previousGroup)
+            Section("Keyboard Shortcut") {
+                KeyboardShortcuts.Recorder("Toggle Overlay", name: .toggleExpand)
             }
 
-            Section("External Icons") {
-                HStack {
-                    Text("Accessibility")
-                    Spacer(minLength: 0)
-                    Text(viewModel.externalAuthState.rawValue.capitalized)
-                        .foregroundStyle(.secondary)
-                }
-                Toggle("Show running app icons", isOn: Binding(
-                    get: { viewModel.showRunningAppIcons },
-                    set: { viewModel.setShowRunningAppIcons($0) }
+            Section("Launch") {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { LaunchAtLogin.isEnabled },
+                    set: { LaunchAtLogin.isEnabled = $0 }
                 ))
-                Button("Refresh icon sources") {
-                    Task { @MainActor in
-                        await viewModel.refreshIcons()
-                    }
-                    viewModel.refreshExternalIcons()
-                }
             }
 
             Section("About") {
-                Text("NotchDock focuses on tactile notch-linked overlay interactions, icon organization, and file actions.")
+                Text("NotchDock v1 hard reset focuses on stable drag hub and compact icon dock.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(20)
         .frame(width: 460)
+        .task {
+            await viewModel.refreshIcons()
+        }
     }
 }

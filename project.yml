@@ -12,6 +12,21 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     from: 2.3.0
+  Defaults:
+    url: https://github.com/sindresorhus/Defaults
+    from: 8.1.0
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: 0.9.19
+  SnapshotTesting:
+    url: https://github.com/pointfreeco/swift-snapshot-testing
+    from: 1.18.7
+  Sentry:
+    url: https://github.com/getsentry/sentry-cocoa
+    from: 8.57.1
+  LaunchAtLogin:
+    url: https://github.com/sindresorhus/LaunchAtLogin-Modern
+    from: 1.1.0
 targets:
   NotchDock:
     type: application
@@ -29,6 +44,14 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
         product: KeyboardShortcuts
+      - package: Defaults
+        product: Defaults
+      - package: ZIPFoundation
+        product: ZIPFoundation
+      - package: Sentry
+        product: Sentry
+      - package: LaunchAtLogin
+        product: LaunchAtLogin
     scheme:
       testTargets:
         - NotchDockTests
@@ -40,6 +63,8 @@ targets:
       - path: Tests
     dependencies:
       - target: NotchDock
+      - package: SnapshotTesting
+        product: SnapshotTesting
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.river.notchdock.tests

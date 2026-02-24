@@ -1,63 +1,44 @@
 import AppKit
-import ApplicationServices
-import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-enum DockOverlayState: String, Codable, Equatable {
-    case idle
+enum OverlayState: String, Codable, CaseIterable {
+    case hidden
+    case armed
     case peek
     case expand
-    case grab
-    case focus
-    case workspace
+    case processing
 }
 
-extension DockOverlayState {
+extension OverlayState {
     var capsuleSize: CGSize {
         switch self {
-        case .idle:
-            return CGSize(width: 170, height: 36)
+        case .hidden:
+            .zero
+        case .armed:
+            CGSize(width: 214, height: 36)
         case .peek:
-            return CGSize(width: 320, height: 58)
-        case .expand, .grab, .focus:
-            return CGSize(width: 620, height: 248)
-        case .workspace:
-            return CGSize(width: 780, height: 312)
+            CGSize(width: 388, height: 66)
+        case .expand, .processing:
+            CGSize(width: 900, height: 262)
         }
     }
 
-    var panelFrameSize: CGSize {
-        let capsule = capsuleSize
-        return CGSize(width: capsule.width + 16, height: capsule.height + 20)
+    var panelSize: CGSize {
+        let size = capsuleSize
+        return CGSize(width: max(30, size.width + 16), height: max(30, size.height + 16))
     }
 }
 
 enum OverlayEvent: Equatable {
-    case topTriggerEnter
-    case topTriggerExit
-    case capsuleClick
-    case pointerLeave
-    case pointerReturn
-    case stage2(Stage2Trigger)
-    case closeOneLevel
-    case longPressIcon(String)
-    case focusIcon(String)
-    case closeFocus
-}
-
-enum Stage2Trigger: String, Codable, CaseIterable, Equatable {
-    case forceClick
-    case dwell300ms
-    case doubleClick
-    case hotkey
-    case dragHover250ms
-}
-
-enum PointerSamplingMode: String, Codable, Equatable {
-    case idle
-    case armed
-    case drag
+    case pointerEnterTrigger
+    case pointerExitTrigger
+    case dragBegan
+    case dragMoved
+    case dragEnded
+    case clickCapsule
+    case esc
+    case dropCommitted
 }
 
 enum TriggerState: String, Codable, Equatable {
@@ -67,77 +48,34 @@ enum TriggerState: String, Codable, Equatable {
     case exiting
 }
 
-struct DragTelemetry: Equatable {
-    var point: CGPoint
-    var velocity: CGVector
-    var timestamp: TimeInterval
+enum DropHubState: Equatable {
+    case idle
+    case predrag
+    case targeting(WorkActionKind)
+    case processing
+    case success
+    case failure
 }
 
-struct OverlayPerfSnapshot: Equatable {
-    var idleCPU: Double
-    var triggerFlaps: Int
-    var avgDragFrameMs: Double
-    var stateTransitions: Int
-
-    static let empty = OverlayPerfSnapshot(
-        idleCPU: 0,
-        triggerFlaps: 0,
-        avgDragFrameMs: 0,
-        stateTransitions: 0
-    )
-}
-
-enum NotchDefaultPolicy: String, Codable, CaseIterable, Identifiable {
-    case adaptiveAuto
-    case alwaysCompact
-    case alwaysRespect
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .adaptiveAuto: return "Adaptive Auto"
-        case .alwaysCompact: return "Always Compact"
-        case .alwaysRespect: return "Always Respect"
-        }
-    }
-}
-
-enum WorkHubStyle: String, Codable, CaseIterable, Identifiable {
-    case magneticDock
-
-    var id: String { rawValue }
-}
-
-enum IconBucket: String, Codable, CaseIterable, Equatable {
+enum IconBucket: String, Codable, CaseIterable {
     case pinned
     case shelf
     case overflow
 }
 
-enum IconSourceKind: String, Codable, Equatable {
-    case manual
-    case ax
-}
-
-struct DockIcon: Identifiable, Hashable {
+struct DockIcon: Identifiable, Codable, Hashable {
     let id: String
-    var source: IconSourceKind
-    var symbolOrImage: String
-    var iconData: Data? = nil
-    var title: String
+    let title: String
+    let symbolName: String
     var bucket: IconBucket
-    var groupID: String
-    var lastUsedAt: Date
-    var rank: Double
+    var rank: Int
+    var isEnabled: Bool
 }
 
-struct DropTarget: Identifiable, Equatable {
-    let action: WorkActionKind
-    let title: String
-    let accepts: [UTType]
-
-    var id: String { action.rawValue }
+struct DropTelemetry: Equatable {
+    let point: CGPoint
+    let velocity: CGVector
+    let timestamp: TimeInterval
 }
 
 enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
@@ -153,45 +91,41 @@ enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var displayName: String {
+    var title: String {
         switch self {
-        case .imageToPDF: return "Image -> PDF"
-        case .pdfToImages: return "PDF -> Images"
-        case .compressZip: return "Compress ZIP"
-        case .extractZip: return "Extract ZIP"
-        case .optimizeImages: return "Optimize Images"
-        case .optimizePDFKeepText: return "Optimize PDF"
-        case .resizeImages: return "Resize Images"
-        case .sendToWorkbench: return "Send to Workbench"
-        case .moveToTrash: return "Move to Trash"
+        case .imageToPDF: "Image -> PDF"
+        case .pdfToImages: "PDF -> Images"
+        case .compressZip: "Compress ZIP"
+        case .extractZip: "Extract ZIP"
+        case .optimizeImages: "Optimize Images"
+        case .optimizePDFKeepText: "Optimize PDF"
+        case .resizeImages: "Resize Images"
+        case .sendToWorkbench: "Send to Workbench"
+        case .moveToTrash: "Move to Trash"
         }
     }
 
     var symbolName: String {
         switch self {
-        case .imageToPDF: return "photo.on.rectangle.angled"
-        case .pdfToImages: return "doc.on.doc"
-        case .compressZip: return "archivebox"
-        case .extractZip: return "tray.and.arrow.down"
-        case .optimizeImages: return "wand.and.stars"
-        case .optimizePDFKeepText: return "doc.text.magnifyingglass"
-        case .resizeImages: return "arrow.up.left.and.arrow.down.right"
-        case .sendToWorkbench: return "shippingbox"
-        case .moveToTrash: return "trash"
+        case .imageToPDF: "photo.on.rectangle.angled"
+        case .pdfToImages: "doc.on.doc"
+        case .compressZip: "archivebox"
+        case .extractZip: "tray.and.arrow.down"
+        case .optimizeImages: "wand.and.stars"
+        case .optimizePDFKeepText: "doc.text.magnifyingglass"
+        case .resizeImages: "arrow.up.left.and.arrow.down.right"
+        case .sendToWorkbench: "shippingbox"
+        case .moveToTrash: "trash"
         }
     }
 }
 
-enum DropContentKind: String, Equatable {
+enum DropContentKind: Equatable {
     case images
     case pdfs
     case zipArchives
     case mixed
     case unsupported
-}
-
-enum FileOutputPolicy: Equatable {
-    case datedFolder
 }
 
 struct DropPlan: Equatable {
@@ -200,128 +134,101 @@ struct DropPlan: Equatable {
     let secondaryActions: [WorkActionKind]
 }
 
-enum DangerousOperationKind: String, Codable, Equatable {
-    case moveToTrash
-    case compressAndTrashOriginals
-    case replaceWithOptimized
-}
-
-struct UndoReplacement: Equatable {
-    let sourceURL: URL
-    let generatedURL: URL
-}
-
 struct UndoToken: Equatable {
     let operationID: String
-    let operationKind: DangerousOperationKind
     let sourceURLs: [URL]
-    let destinationURLs: [URL]
-    let replacements: [UndoReplacement]
-    let createdAt: Date
+    let trashedURLs: [URL]
+    let generatedURLs: [URL]
     let expiresAt: Date
 }
 
-struct ActionExecutionResult: Equatable {
+struct DropExecutionResult: Equatable {
     let action: WorkActionKind
     let outputs: [URL]
     let reclaimedBytes: Int64
-    let message: String
     let undoToken: UndoToken?
+    let message: String
     let warnings: [String]
 }
 
-struct WorkspaceCard: Identifiable, Codable, Equatable {
-    let id: String
-    var title: String
-    var fileURL: URL?
-    var noteText: String?
-    var positionX: Double
-    var positionY: Double
-    var clusterID: String?
-}
-
-struct WorkspaceCluster: Identifiable, Codable, Equatable {
-    let id: String
-    var name: String
-    var colorHex: String
-}
-
-struct WorkspaceState: Codable, Equatable {
-    var cards: [WorkspaceCard]
-    var clusters: [WorkspaceCluster]
-    var updatedAt: Date
-
-    static let empty = WorkspaceState(cards: [], clusters: [], updatedAt: .distantPast)
-}
-
-struct DropToast: Equatable {
+struct OverlayToast: Equatable, Identifiable {
+    let id = UUID()
     let message: String
     let isError: Bool
 }
 
+struct OverlayPerfSnapshot: Equatable {
+    var idleCPUPercent: Double
+    var triggerFlaps: Int
+    var avgDragFrameMs: Double
+    var dragSampleCount: Int
+
+    static let empty = OverlayPerfSnapshot(
+        idleCPUPercent: 0,
+        triggerFlaps: 0,
+        avgDragFrameMs: 0,
+        dragSampleCount: 0
+    )
+}
+
+struct IconPolicyResult: Equatable {
+    let visible: [DockIcon]
+    let overflow: [DockIcon]
+}
+
 struct NotchLayoutSnapshot: Equatable {
-    var screenWidth: CGFloat
-    var safeLeft: CGFloat
-    var safeRight: CGFloat
-    var hasNotch: Bool
-    var compactMode: Bool
-    var spacing: CGFloat
-}
-
-enum MirrorAuthState: String, Codable, Equatable {
-    case unknown
-    case denied
-    case granted
-}
-
-struct ExternalMenuBarItem: Identifiable, Equatable {
-    let id: String
-    var ownerBundleID: String
-    var title: String
-    var frameInScreen: CGRect
-    var supportsPressAction: Bool
-    var imageData: Data?
-}
-
-protocol IconSourceProviding: AnyObject {
-    func fetchIcons() async -> [DockIcon]
-}
-
-@MainActor
-protocol RunningAppIconControlling: AnyObject {
-    func setIncludeRunningApps(_ enabled: Bool)
+    let hasNotch: Bool
+    let notchWidth: CGFloat
+    let triggerFrame: CGRect
+    let triggerOuterFrame: CGRect
 }
 
 protocol WorkActionExecuting: AnyObject {
-    func classify(_ urls: [URL]) -> DropPlan
-    func execute(action: WorkActionKind, inputs: [URL], outputPolicy: FileOutputPolicy) throws -> ActionExecutionResult
-    func undo(token: UndoToken) -> Bool
+    func classify(_ inputs: [URL]) -> DropPlan
+    func execute(_ action: WorkActionKind, inputs: [URL]) async throws -> DropExecutionResult
+    func undo(_ token: UndoToken) async -> Bool
+}
+
+protocol IconSourceProviding: AnyObject {
+    func fetchPinnedCandidates() async -> [DockIcon]
+    func fetchUserSelectedIcons() async -> [DockIcon]
 }
 
 protocol NotchGeometryCalculating: AnyObject {
-    func capsuleFrame(screen: NSScreen, state: DockOverlayState, policy: NotchDefaultPolicy) -> CGRect
-    func capsuleFrame(screen: NSScreen, visualState: DockOverlayState, policy: NotchDefaultPolicy, compactOverride: Bool?) -> CGRect
-    func triggerZone(screen: NSScreen) -> CGRect
-    func hitMaskRect(for state: DockOverlayState, panelFrame: CGRect) -> CGRect
-    func layoutSnapshot(screen: NSScreen, policy: NotchDefaultPolicy) -> NotchLayoutSnapshot
+    func layoutSnapshot(screen: NSScreen) -> NotchLayoutSnapshot
+    func panelFrame(screen: NSScreen, state: OverlayState) -> CGRect
 }
 
-protocol WorkspaceStoring: AnyObject {
-    func load() -> WorkspaceState
-    func save(_ state: WorkspaceState) throws
+protocol DropRoutingProviding: AnyObject {
+    func resolveAction(plan: DropPlan, targeted: WorkActionKind?, telemetry: DropTelemetry?) -> WorkActionKind?
 }
 
-@MainActor
-protocol ExternalIconProviding: AnyObject {
-    var itemsPublisher: AnyPublisher<[ExternalMenuBarItem], Never> { get }
-    var authState: MirrorAuthState { get }
-    func start()
-    func refresh()
-    func setHighFrequencyMode(_ enabled: Bool)
+protocol IconPolicyProviding: AnyObject {
+    func arrange(icons: [DockIcon], state: OverlayState) -> IconPolicyResult
 }
 
-extension ExternalIconProviding {
-    func setHighFrequencyMode(_ enabled: Bool) {
-        _ = enabled
+protocol TriggerProviding: AnyObject {
+    var state: TriggerState { get }
+    func update(rawInside: Bool, timestamp: TimeInterval) -> OverlayEvent?
+    func reset()
+}
+
+protocol DragPipelining: AnyObject {
+    func ingest(point: CGPoint, timestamp: TimeInterval) -> DropTelemetry
+    func reset()
+}
+
+extension WorkActionKind {
+    var acceptedTypes: [UTType] {
+        switch self {
+        case .imageToPDF, .optimizeImages, .resizeImages:
+            [.image]
+        case .pdfToImages, .optimizePDFKeepText:
+            [.pdf]
+        case .extractZip:
+            [.zip]
+        case .compressZip, .sendToWorkbench, .moveToTrash:
+            [.data]
+        }
     }
 }
