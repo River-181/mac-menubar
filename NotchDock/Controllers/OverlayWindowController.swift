@@ -138,9 +138,12 @@ final class OverlayWindowController {
     }
 
     private func sample() {
-        guard let screen = NSScreen.main else { return }
         let now = Date().timeIntervalSinceReferenceDate
         let point = NSEvent.mouseLocation
+        let screen = screenContaining(point: point)
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let screen else { return }
         let telemetry = dragPipeline.ingest(point: point, timestamp: now)
         let snapshot = geometry.layoutSnapshot(screen: screen)
 
@@ -154,8 +157,9 @@ final class OverlayWindowController {
         )
         let isTriggerInside = snapshot.triggerFrame.contains(point)
         let isOuterInside = snapshot.triggerOuterFrame.contains(point)
+        let isActivationTrigger = isTriggerInside || (isOuterInside && isFileDrag && viewModel.overlayState != .hidden)
 
-        let shouldIntercept = isCapsuleInside || (isFileDrag && isTriggerInside)
+        let shouldIntercept = isCapsuleInside || isActivationTrigger
         panel.ignoresMouseEvents = !shouldIntercept
 
         viewModel.ingestPointerSample(
@@ -202,6 +206,10 @@ final class OverlayWindowController {
             "com.apple.pasteboard.promised-file-url"
         ]
         return hints.contains(where: rawTypes.contains)
+    }
+
+    private func screenContaining(point: CGPoint) -> NSScreen? {
+        NSScreen.screens.first(where: { NSPointInRect(point, $0.frame) })
     }
 
     private func intervalForSamplingMode(_ mode: PointerSamplingMode) -> TimeInterval {

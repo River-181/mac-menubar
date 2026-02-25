@@ -11,16 +11,7 @@ final class HitMaskEngine {
             width: size.width,
             height: size.height
         )
-        let notchBias: CGFloat
-        if !hasNotch {
-            notchBias = 7
-        } else if notchWidth < 180 {
-            notchBias = 8
-        } else if notchWidth < 240 {
-            notchBias = 9
-        } else {
-            notchBias = 10
-        }
+        let notchBias: CGFloat = 8
         return frame.insetBy(dx: -notchBias, dy: -(notchBias - 1))
     }
 
