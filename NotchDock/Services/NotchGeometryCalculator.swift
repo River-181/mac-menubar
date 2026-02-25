@@ -23,7 +23,7 @@ final class NotchGeometryCalculator: NotchGeometryCalculating {
             width: triggerWidth,
             height: triggerHeight
         )
-        let triggerOuterFrame = triggerFrame.insetBy(dx: -20, dy: -8)
+        let triggerOuterFrame = triggerFrame.insetBy(dx: -8, dy: -8)
         return NotchLayoutSnapshot(
             hasNotch: hasNotch,
             notchWidth: notchWidth,
