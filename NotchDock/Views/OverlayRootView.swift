@@ -11,18 +11,11 @@ struct OverlayRootView: View {
         return merged.isEmpty ? WorkActionKind.allCases : merged
     }
 
-    private var effectiveState: OverlayState {
-        if viewModel.overlayState == .hidden && (viewModel.isNearTopTrigger || viewModel.triggerState == .entering) {
-            return .armed
-        }
-        return viewModel.overlayState
-    }
-
     private var shouldRenderCapsule: Bool {
         if viewModel.isDragSessionActive {
             return true
         }
-        return effectiveState != .hidden
+        return viewModel.presentationState != .hidden
     }
 
     var body: some View {
@@ -36,41 +29,46 @@ struct OverlayRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
-        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.1), value: effectiveState)
+        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.1), value: viewModel.presentationState)
         .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84, blendDuration: 0.1), value: viewModel.isDragSessionActive)
         .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.82, blendDuration: 0.08), value: viewModel.targetedAction)
     }
 
     private var capsule: some View {
         VStack(spacing: 10) {
-            if effectiveState == .expand || effectiveState == .processing {
+            if viewModel.presentationState == .expand || viewModel.presentationState == .processing {
                 header
             }
 
-            if effectiveState == .armed {
+            if viewModel.presentationState == .armed {
                 armedHint
             }
 
-            if effectiveState == .peek || effectiveState == .expand || effectiveState == .processing {
-                IconStripView(icons: viewModel.visibleIcons, state: effectiveState)
+            if viewModel.presentationState == .peek || viewModel.presentationState == .expand || viewModel.presentationState == .processing {
+                IconStripView(icons: viewModel.visibleIcons, state: viewModel.presentationState)
                     .padding(.horizontal, 12)
-                    .padding(.top, effectiveState == .peek ? 8 : 4)
+                    .padding(.top, viewModel.presentationState == .peek ? 8 : 4)
             }
 
-            if effectiveState == .peek && !viewModel.isDragSessionActive {
+            if viewModel.presentationState == .peek && !viewModel.isDragSessionActive {
                 compactHint
                     .padding(.horizontal, 14)
             }
 
-            if effectiveState == .expand || effectiveState == .processing || viewModel.isDragSessionActive {
+            if viewModel.presentationState == .expand || viewModel.presentationState == .processing || viewModel.isDragSessionActive {
                 DropHubView(
                     actions: activeActions,
                     recommendedAction: viewModel.dropPlan.recommendedAction,
+                    interactionMode: viewModel.interactionMode,
                     targetedAction: viewModel.targetedAction,
+                    showsRecommendedAction: viewModel.isRecommendedActionVisible,
                     onRunAction: { action in
                         Task { @MainActor in
                             await viewModel.performActionFromPicker(action)
                         }
+                    },
+                    onTargetChange: { action in
+                        viewModel.setHoveredAction(action)
                     },
                     onDrop: { action, urls in
                         Task { @MainActor in
@@ -89,12 +87,12 @@ struct OverlayRootView: View {
                     .padding(.bottom, 8)
             }
         }
-        .frame(width: effectiveState.capsuleSize.width, alignment: .top)
+        .frame(width: viewModel.panelSize.width - 16, alignment: .top)
         .padding(.vertical, 8)
         .background(capsuleBackground)
         .overlay(capsuleOutline)
         .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 8)
-        .scaleEffect(effectiveState == .armed ? 1.02 : 1)
+        .scaleEffect(viewModel.presentationState == .armed ? 1.02 : 1)
         .contentShape(Capsule(style: .continuous))
         .onTapGesture {
             viewModel.toggleExpand()
@@ -142,13 +140,13 @@ struct OverlayRootView: View {
             Capsule(style: .continuous)
                 .fill(.white.opacity(0.22))
                 .frame(width: 54, height: 6)
-            Text(viewModel.isDragSessionActive ? "Drop files on the notch" : "Hover, click, or drag files here")
+            Text(viewModel.isDragSessionActive ? "Keep dragging on the notch" : "Hover, click, or drag files here")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
     private var compactHint: some View {

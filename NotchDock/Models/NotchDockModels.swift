@@ -16,11 +16,11 @@ extension OverlayState {
         case .hidden:
             .zero
         case .armed:
-            CGSize(width: 214, height: 36)
+            CGSize(width: 214, height: 40)
         case .peek:
-            CGSize(width: 388, height: 66)
+            CGSize(width: 404, height: 92)
         case .expand, .processing:
-            CGSize(width: 900, height: 262)
+            CGSize(width: 900, height: 224)
         }
     }
 
@@ -28,6 +28,11 @@ extension OverlayState {
         let size = capsuleSize
         return CGSize(width: max(30, size.width + 16), height: max(30, size.height + 16))
     }
+}
+
+enum OverlayInteractionMode: String, Codable, Equatable {
+    case click
+    case drag
 }
 
 enum OverlayEvent: Equatable {
@@ -50,8 +55,8 @@ enum TriggerState: String, Codable, Equatable {
 
 enum DropHubState: Equatable {
     case idle
-    case predrag
-    case targeting(WorkActionKind)
+    case preview
+    case focused(WorkActionKind)
     case processing
     case success
     case failure
@@ -196,7 +201,7 @@ protocol IconSourceProviding: AnyObject {
 
 protocol NotchGeometryCalculating: AnyObject {
     func layoutSnapshot(screen: NSScreen) -> NotchLayoutSnapshot
-    func panelFrame(screen: NSScreen, state: OverlayState) -> CGRect
+    func panelFrame(screen: NSScreen, panelSize: CGSize) -> CGRect
 }
 
 protocol DropRoutingProviding: AnyObject {

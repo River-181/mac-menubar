@@ -30,7 +30,7 @@ final class OverlayWindowController {
         self.geometry = geometry
         self.dragPipeline = dragPipeline
 
-        let initialSize = OverlayState.armed.panelSize
+        let initialSize = viewModel.panelSize
         panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: initialSize),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -63,7 +63,7 @@ final class OverlayWindowController {
             return self.hitMask.isInsideCapsule(
                 point: screenPoint,
                 panelFrame: self.panel.frame,
-                state: self.viewModel.overlayState,
+                state: self.viewModel.presentationState,
                 hasNotch: snapshot.hasNotch,
                 notchWidth: snapshot.notchWidth
             )
@@ -78,7 +78,7 @@ final class OverlayWindowController {
         panel.contentView = container
         panel.orderFrontRegardless()
 
-        stateObserver = viewModel.$overlayState
+        stateObserver = viewModel.$panelSize
             .removeDuplicates()
             .sink { [weak self] _ in
                 self?.layoutPanel()
@@ -112,7 +112,7 @@ final class OverlayWindowController {
 
     private func layoutPanel() {
         guard let screen = NSScreen.main else { return }
-        let frame = geometry.panelFrame(screen: screen, state: viewModel.overlayState)
+        let frame = geometry.panelFrame(screen: screen, panelSize: viewModel.panelSize)
         if !panel.frame.equalTo(frame) {
             panel.setFrame(frame, display: false)
         }
@@ -151,7 +151,7 @@ final class OverlayWindowController {
         let isCapsuleInside = hitMask.isInsideCapsule(
             point: point,
             panelFrame: panel.frame,
-            state: viewModel.overlayState,
+            state: viewModel.presentationState,
             hasNotch: snapshot.hasNotch,
             notchWidth: snapshot.notchWidth
         )

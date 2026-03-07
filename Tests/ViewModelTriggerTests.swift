@@ -35,6 +35,30 @@ final class ViewModelTriggerTests: XCTestCase {
         XCTAssertFalse(viewModel.isDragSessionActive)
     }
 
+    func testHoveredActionClearsWhenDragLeavesTrigger() async {
+        let viewModel = makeViewModel()
+
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: .zero, velocity: .zero, timestamp: 0),
+            isTriggerRawInside: true,
+            isTriggerOuterInside: true,
+            isCapsuleInside: false,
+            isDragging: true
+        )
+        viewModel.setHoveredAction(.compressZip)
+
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: CGPoint(x: 80, y: 20), velocity: .zero, timestamp: 0.1),
+            isTriggerRawInside: false,
+            isTriggerOuterInside: false,
+            isCapsuleInside: false,
+            isDragging: true
+        )
+
+        XCTAssertNil(viewModel.targetedAction)
+        XCTAssertEqual(viewModel.dropHubState, .idle)
+    }
+
     func testQuickTriggerFlapDoesNotEnterPeek() async {
         let viewModel = makeViewModel()
 
@@ -77,6 +101,30 @@ final class ViewModelTriggerTests: XCTestCase {
             expectation.fulfill()
         }
         await fulfillment(of: [expectation], timeout: 1.0)
+    }
+
+    func testClickTransitionsFromHiddenArmedAndPeekIntoExpand() async {
+        let viewModel = makeViewModel()
+
+        viewModel.toggleExpand()
+        XCTAssertEqual(viewModel.overlayState, .expand)
+
+        viewModel.closeOneLevel()
+        XCTAssertEqual(viewModel.overlayState, .peek)
+
+        viewModel.closeOneLevel()
+        XCTAssertEqual(viewModel.overlayState, .hidden)
+
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: .zero, velocity: .zero, timestamp: 1),
+            isTriggerRawInside: true,
+            isTriggerOuterInside: true,
+            isCapsuleInside: false,
+            isDragging: false
+        )
+        XCTAssertEqual(viewModel.overlayState, .armed)
+        viewModel.toggleExpand()
+        XCTAssertEqual(viewModel.overlayState, .expand)
     }
 
     private func makeViewModel() -> NotchDockViewModel {

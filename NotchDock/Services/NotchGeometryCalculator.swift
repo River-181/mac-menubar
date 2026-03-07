@@ -32,8 +32,7 @@ final class NotchGeometryCalculator: NotchGeometryCalculating {
         )
     }
 
-    func panelFrame(screen: NSScreen, state: OverlayState) -> CGRect {
-        let panelSize = state.panelSize
+    func panelFrame(screen: NSScreen, panelSize: CGSize) -> CGRect {
         let x = screen.frame.midX - (panelSize.width / 2)
         let y = screen.frame.maxY - panelSize.height - topMargin
         return CGRect(x: x, y: y, width: panelSize.width, height: panelSize.height)

@@ -4,8 +4,11 @@ import UniformTypeIdentifiers
 struct DropHubView: View {
     let actions: [WorkActionKind]
     let recommendedAction: WorkActionKind?
+    let interactionMode: OverlayInteractionMode
     let targetedAction: WorkActionKind?
+    let showsRecommendedAction: Bool
     let onRunAction: (WorkActionKind) -> Void
+    let onTargetChange: (WorkActionKind?) -> Void
     let onDrop: (WorkActionKind, [URL]) -> Void
 
     var body: some View {
@@ -25,8 +28,10 @@ struct DropHubView: View {
                     DropChip(
                         action: action,
                         highlighted: targetedAction == action,
-                        emphasized: recommendedAction == action,
+                        emphasized: showsRecommendedAction && recommendedAction == action,
+                        interactionMode: interactionMode,
                         onSelect: { onRunAction(action) },
+                        onTargetChange: onTargetChange,
                         onDrop: { urls in onDrop(action, urls) }
                     )
                 }
@@ -35,9 +40,9 @@ struct DropHubView: View {
     }
 
     private var columns: [GridItem] {
-        [
-            GridItem(.adaptive(minimum: 250, maximum: 340), spacing: 10, alignment: .top)
-        ]
+        let minimum: CGFloat = interactionMode == .drag ? 220 : 280
+        let maximum: CGFloat = interactionMode == .drag ? 280 : 360
+        return [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: 10, alignment: .top)]
     }
 }
 
@@ -45,7 +50,9 @@ private struct DropChip: View {
     let action: WorkActionKind
     let highlighted: Bool
     let emphasized: Bool
+    let interactionMode: OverlayInteractionMode
     let onSelect: () -> Void
+    let onTargetChange: (WorkActionKind?) -> Void
     let onDrop: ([URL]) -> Void
 
     @State private var isTargeted = false
@@ -66,7 +73,7 @@ private struct DropChip: View {
                         Text(action.title)
                             .font(.system(size: 14, weight: .semibold))
                             .lineLimit(1)
-                        if emphasized {
+                        if emphasized && !highlighted && !isTargeted {
                             Text("Best")
                                 .font(.system(size: 10, weight: .bold))
                                 .foregroundStyle(.primary.opacity(0.72))
@@ -75,7 +82,7 @@ private struct DropChip: View {
                                 .background(.white.opacity(0.2), in: Capsule())
                         }
                     }
-                    Text(emphasized ? "Recommended for current files" : "Click or drop to run")
+                    Text(subtitle)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -103,8 +110,21 @@ private struct DropChip: View {
             loadURLs(providers: providers, onComplete: onDrop)
             return true
         }
+        .onChange(of: isTargeted) { _, value in
+            onTargetChange(value ? action : nil)
+        }
         .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.84), value: highlighted)
         .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.84), value: isTargeted)
+    }
+
+    private var subtitle: String {
+        if highlighted || isTargeted {
+            return "Release to run"
+        }
+        if emphasized {
+            return "Recommended for current files"
+        }
+        return interactionMode == .drag ? "Drag onto this chip" : "Click or drop to run"
     }
 
     private var backgroundFill: Color {

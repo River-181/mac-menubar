@@ -20,7 +20,7 @@ final class DropRoutingEngineTests: XCTestCase {
         XCTAssertEqual(selected, .optimizePDFKeepText)
     }
 
-    func testVelocityCanPickLastSecondary() {
+    func testSecondaryFallbackIsDeterministic() {
         let engine = DropRoutingEngine()
         let plan = DropPlan(kind: .mixed, recommendedAction: nil, secondaryActions: [.compressZip, .moveToTrash])
         let selected = engine.resolveAction(
@@ -28,6 +28,6 @@ final class DropRoutingEngineTests: XCTestCase {
             targeted: nil,
             telemetry: DropTelemetry(point: .zero, velocity: CGVector(dx: -900, dy: 0), timestamp: 0)
         )
-        XCTAssertEqual(selected, .moveToTrash)
+        XCTAssertEqual(selected, .compressZip)
     }
 }
