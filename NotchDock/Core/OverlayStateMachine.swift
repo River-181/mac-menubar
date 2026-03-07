@@ -7,6 +7,8 @@ struct OverlayStateMachine {
             return .peek
         case (.armed, .pointerEnterTrigger):
             return .peek
+        case (.hidden, .clickCapsule), (.armed, .clickCapsule):
+            return .expand
         case (.peek, .clickCapsule):
             return .expand
         case (.expand, .clickCapsule):
