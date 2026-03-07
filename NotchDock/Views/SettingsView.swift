@@ -17,14 +17,30 @@ struct SettingsView: View {
             }
 
             Section("Visible Icons") {
+                HStack {
+                    Text("Now showing")
+                    Spacer()
+                    Text("\(viewModel.visibleIcons.count) visible · \(viewModel.overflowIcons.count) overflow")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.footnote)
+
                 ForEach(viewModel.candidateIcons) { icon in
-                    Toggle(
-                        icon.title,
-                        isOn: Binding(
-                            get: { viewModel.selectedIconIDs.contains(icon.id) },
-                            set: { viewModel.setIconEnabled(icon.id, enabled: $0) }
+                    HStack {
+                        Label(icon.title, systemImage: icon.symbolName)
+                        Spacer()
+                        Text(icon.bucket == .pinned ? "Pinned" : "Shelf")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Toggle(
+                            icon.title,
+                            isOn: Binding(
+                                get: { viewModel.selectedIconIDs.contains(icon.id) },
+                                set: { viewModel.setIconEnabled(icon.id, enabled: $0) }
+                            )
                         )
-                    )
+                        .labelsHidden()
+                    }
                 }
             }
 

@@ -7,12 +7,15 @@ final class NotchDockViewModel: ObservableObject {
     static let shared = NotchDockViewModel()
 
     @Published private(set) var overlayState: OverlayState = .hidden
+    @Published private(set) var presentationState: OverlayState = .hidden
     @Published private(set) var dropHubState: DropHubState = .idle
     @Published private(set) var triggerState: TriggerState = .outside
     @Published private(set) var visibleIcons: [DockIcon] = []
     @Published private(set) var overflowIcons: [DockIcon] = []
     @Published private(set) var candidateIcons: [DockIcon] = []
     @Published private(set) var selectedIconIDs: Set<String> = []
+    @Published private(set) var interactionMode: OverlayInteractionMode = .click
+    @Published private(set) var panelSize: CGSize = OverlayState.armed.panelSize
     @Published var dropPlan = DropPlan(kind: .unsupported, recommendedAction: nil, secondaryActions: [])
     @Published var toast: OverlayToast?
     @Published var targetedAction: WorkActionKind?
@@ -50,12 +53,17 @@ final class NotchDockViewModel: ObservableObject {
         self.iconPolicy = iconPolicy
         self.dropRouting = dropRouting
         self.triggerEngine = triggerEngine
+        refreshPresentation()
         Task { await refreshIcons() }
     }
 
     var canUndoDangerousAction: Bool {
         guard let lastUndoToken else { return false }
         return Date() <= lastUndoToken.expiresAt
+    }
+
+    var isRecommendedActionVisible: Bool {
+        targetedAction == nil
     }
 
     func transition(_ event: OverlayEvent) {
@@ -65,6 +73,7 @@ final class NotchDockViewModel: ObservableObject {
             overlayState = next
         }
         recomputeIconLayout()
+        refreshPresentation()
     }
 
     func ingestPointerSample(
@@ -77,8 +86,10 @@ final class NotchDockViewModel: ObservableObject {
         isPointerInsideOverlay = isCapsuleInside
         if isTriggerRawInside && overlayState == .hidden {
             overlayState = .armed
+            refreshPresentation()
         } else if !isTriggerRawInside && overlayState == .armed && !isDragging {
             overlayState = .hidden
+            refreshPresentation()
         }
         isNearTopTrigger = isTriggerRawInside
 
@@ -90,8 +101,9 @@ final class NotchDockViewModel: ObservableObject {
             triggerState = triggerEngine.state
         }
 
-        let isActivationTrigger = isTriggerRawInside || (isTriggerOuterInside && overlayState != .hidden)
-        let shouldDriveDragSession = isDragging && (isDragSessionActive || isCapsuleInside || isActivationTrigger)
+        interactionMode = isDragging ? .drag : .click
+        let isDragEligible = isTriggerRawInside || isCapsuleInside
+        let shouldDriveDragSession = isDragging && (isDragEligible || (isDragSessionActive && isCapsuleInside))
 
         if shouldDriveDragSession {
             if let previous = lastDragSampleTimestamp {
@@ -103,10 +115,15 @@ final class NotchDockViewModel: ObservableObject {
             if overlayState != .expand && overlayState != .processing {
                 transition(.dragBegan)
             }
-            updateTargetAction(with: sample)
+            updateDropPresentation(isTriggerRawInside: isTriggerRawInside, isCapsuleInside: isCapsuleInside)
         } else {
             lastDragSampleTimestamp = nil
-            if !isDragging {
+            if isDragSessionActive {
+                clearTargetAction()
+            }
+            if isDragging {
+                endDragSession()
+            } else {
                 endDragSession()
             }
         }
@@ -116,26 +133,32 @@ final class NotchDockViewModel: ObservableObject {
         } else {
             cancelLeaveGrace()
         }
+        refreshPresentation()
     }
 
     func beginDragSession() {
         guard !isDragSessionActive else { return }
         isDragSessionActive = true
-        dropHubState = .predrag
+        interactionMode = .drag
+        dropHubState = .preview
+        refreshPresentation()
     }
 
     func endDragSession() {
         guard isDragSessionActive else { return }
         isDragSessionActive = false
-        targetedAction = nil
-        hoverLockWorkItem?.cancel()
-        hoverLockWorkItem = nil
+        interactionMode = .click
+        clearTargetAction()
         if overlayState == .processing {
             transition(.dragEnded)
         }
-        if case .targeting = dropHubState {
+        if case .focused = dropHubState {
             dropHubState = .idle
         }
+        if dropHubState == .preview {
+            dropHubState = .idle
+        }
+        refreshPresentation()
     }
 
     func toggleExpand() {
@@ -165,6 +188,7 @@ final class NotchDockViewModel: ObservableObject {
         allSelectedIcons = selected
         selectedIconIDs = Set(selected.map(\.id))
         recomputeIconLayout()
+        refreshPresentation()
     }
 
     func performDrop(inputs: [URL], target: WorkActionKind?) async {
@@ -188,6 +212,29 @@ final class NotchDockViewModel: ObservableObject {
         }
 
         transition(.dragEnded)
+    }
+
+    func setHoveredAction(_ action: WorkActionKind?) {
+        if let action {
+            guard targetedAction != action else { return }
+            targetedAction = action
+            hoverLockWorkItem?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                if self.targetedAction == action {
+                    self.dropHubState = .focused(action)
+                    self.refreshPresentation()
+                }
+            }
+            hoverLockWorkItem = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+            return
+        }
+        clearTargetAction()
+        if isDragSessionActive {
+            dropHubState = .preview
+        }
+        refreshPresentation()
     }
 
     func performActionFromPicker(_ action: WorkActionKind) async {
@@ -240,32 +287,85 @@ final class NotchDockViewModel: ObservableObject {
         )
     }
 
-    private func updateTargetAction(with sample: DropTelemetry) {
-        let resolved = dropRouting.resolveAction(plan: dropPlan, targeted: targetedAction, telemetry: sample)
-        guard let resolved else {
-            targetedAction = nil
-            dropHubState = .predrag
-            return
-        }
-        if targetedAction == resolved {
-            return
-        }
-        targetedAction = resolved
-        hoverLockWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            if self.targetedAction == resolved {
-                self.dropHubState = .targeting(resolved)
+    private func updateDropPresentation(isTriggerRawInside: Bool, isCapsuleInside: Bool) {
+        guard isTriggerRawInside || isCapsuleInside else {
+            clearTargetAction()
+            if isDragSessionActive {
+                dropHubState = .preview
             }
+            return
         }
-        hoverLockWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: work)
+        if targetedAction == nil {
+            dropHubState = .preview
+        }
+    }
+
+    private func clearTargetAction() {
+        targetedAction = nil
+        hoverLockWorkItem?.cancel()
+        hoverLockWorkItem = nil
     }
 
     private func recomputeIconLayout() {
         let arranged = iconPolicy.arrange(icons: allSelectedIcons, state: overlayState)
         visibleIcons = arranged.visible
         overflowIcons = arranged.overflow
+        refreshPresentation()
+    }
+
+    private func refreshPresentation() {
+        let nextState = resolvedPresentationState()
+        if presentationState != nextState {
+            presentationState = nextState
+        }
+        let nextPanelSize = resolvedPanelSize(for: nextState)
+        if panelSize != nextPanelSize {
+            panelSize = nextPanelSize
+        }
+    }
+
+    private func resolvedPresentationState() -> OverlayState {
+        if overlayState == .hidden && (isNearTopTrigger || triggerState == .entering) {
+            return .armed
+        }
+        return overlayState
+    }
+
+    private func resolvedPanelSize(for state: OverlayState) -> CGSize {
+        guard state != .hidden else {
+            return CGSize(width: 30, height: 30)
+        }
+
+        let width = state.capsuleSize.width + 16
+        let verticalPadding: CGFloat = 16
+        let toastHeight: CGFloat = toast == nil ? 0 : 52
+
+        switch state {
+        case .armed:
+            return CGSize(width: width, height: 58)
+        case .peek:
+            let iconHeight: CGFloat = visibleIcons.isEmpty ? 0 : 44
+            let hintHeight: CGFloat = isDragSessionActive ? 0 : 24
+            return CGSize(width: width, height: verticalPadding + iconHeight + hintHeight + toastHeight + 12)
+        case .expand, .processing:
+            let iconHeight: CGFloat = visibleIcons.isEmpty ? 0 : 44
+            let headerHeight: CGFloat = 32
+            let hubHeaderHeight: CGFloat = 22
+            let columns: CGFloat = interactionMode == .drag ? 3 : 2
+            let actionCount = CGFloat(max(1, dropActions.count))
+            let rows = ceil(actionCount / columns)
+            let chipHeight = rows * 68
+            let totalHeight = verticalPadding + headerHeight + iconHeight + hubHeaderHeight + chipHeight + toastHeight + 34
+            return CGSize(width: width, height: totalHeight)
+        case .hidden:
+            return CGSize(width: 30, height: 30)
+        }
+    }
+
+    private var dropActions: [WorkActionKind] {
+        let primary = dropPlan.recommendedAction.map { [$0] } ?? []
+        let merged = primary + dropPlan.secondaryActions
+        return merged.isEmpty ? WorkActionKind.allCases : merged
     }
 
     private func scheduleLeaveGrace() {
@@ -278,6 +378,7 @@ final class NotchDockViewModel: ObservableObject {
             self.overlayState = .hidden
             self.dropHubState = .idle
             self.recomputeIconLayout()
+            self.refreshPresentation()
         }
         leaveGraceWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
@@ -297,9 +398,11 @@ final class NotchDockViewModel: ObservableObject {
             withAnimation(.easeInOut(duration: 0.16)) {
                 self?.toast = nil
             }
+            self?.refreshPresentation()
         }
         toastDismissWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
+        refreshPresentation()
     }
 
     private func recordTriggerEvent(_ event: OverlayEvent, timestamp: TimeInterval) {
