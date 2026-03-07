@@ -11,11 +11,18 @@ struct OverlayRootView: View {
         return merged.isEmpty ? WorkActionKind.allCases : merged
     }
 
+    private var effectiveState: OverlayState {
+        if viewModel.overlayState == .hidden && (viewModel.isNearTopTrigger || viewModel.triggerState == .entering) {
+            return .armed
+        }
+        return viewModel.overlayState
+    }
+
     private var shouldRenderCapsule: Bool {
         if viewModel.isDragSessionActive {
             return true
         }
-        return viewModel.overlayState != .hidden && viewModel.overlayState != .armed
+        return effectiveState != .hidden
     }
 
     var body: some View {
@@ -29,24 +36,36 @@ struct OverlayRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea()
-        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.1), value: viewModel.overlayState)
+        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.1), value: effectiveState)
+        .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.84, blendDuration: 0.1), value: viewModel.isDragSessionActive)
+        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.82, blendDuration: 0.08), value: viewModel.targetedAction)
     }
 
     private var capsule: some View {
         VStack(spacing: 10) {
-            if viewModel.overlayState == .expand || viewModel.overlayState == .processing {
+            if effectiveState == .expand || effectiveState == .processing {
                 header
             }
 
-            if viewModel.overlayState != .armed {
-                IconStripView(icons: viewModel.visibleIcons, state: viewModel.overlayState)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 4)
+            if effectiveState == .armed {
+                armedHint
             }
 
-            if viewModel.overlayState == .expand || viewModel.overlayState == .processing || viewModel.isDragSessionActive {
+            if effectiveState == .peek || effectiveState == .expand || effectiveState == .processing {
+                IconStripView(icons: viewModel.visibleIcons, state: effectiveState)
+                    .padding(.horizontal, 12)
+                    .padding(.top, effectiveState == .peek ? 8 : 4)
+            }
+
+            if effectiveState == .peek && !viewModel.isDragSessionActive {
+                compactHint
+                    .padding(.horizontal, 14)
+            }
+
+            if effectiveState == .expand || effectiveState == .processing || viewModel.isDragSessionActive {
                 DropHubView(
                     actions: activeActions,
+                    recommendedAction: viewModel.dropPlan.recommendedAction,
                     targetedAction: viewModel.targetedAction,
                     onRunAction: { action in
                         Task { @MainActor in
@@ -70,15 +89,12 @@ struct OverlayRootView: View {
                     .padding(.bottom, 8)
             }
         }
-        .frame(width: viewModel.overlayState.capsuleSize.width, alignment: .top)
+        .frame(width: effectiveState.capsuleSize.width, alignment: .top)
         .padding(.vertical, 8)
-        .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
-        )
+        .background(capsuleBackground)
+        .overlay(capsuleOutline)
         .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 8)
-        .scaleEffect(viewModel.overlayState == .armed ? 1.02 : 1)
+        .scaleEffect(effectiveState == .armed ? 1.02 : 1)
         .contentShape(Capsule(style: .continuous))
         .onTapGesture {
             viewModel.toggleExpand()
@@ -91,6 +107,61 @@ struct OverlayRootView: View {
             }
             return true
         }
+    }
+
+    private var capsuleBackground: some View {
+        Capsule(style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay(
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(viewModel.isDragSessionActive ? 0.15 : 0.1),
+                                .white.opacity(0.04)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            )
+    }
+
+    private var capsuleOutline: some View {
+        Capsule(style: .continuous)
+            .stroke(Color.white.opacity(viewModel.isDragSessionActive ? 0.28 : 0.22), lineWidth: 1)
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(viewModel.targetedAction == nil ? 0 : 0.16), lineWidth: 2)
+                    .blur(radius: 6)
+            )
+    }
+
+    private var armedHint: some View {
+        HStack(spacing: 10) {
+            Capsule(style: .continuous)
+                .fill(.white.opacity(0.22))
+                .frame(width: 54, height: 6)
+            Text(viewModel.isDragSessionActive ? "Drop files on the notch" : "Hover, click, or drag files here")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    private var compactHint: some View {
+        HStack(spacing: 8) {
+            Image(systemName: viewModel.isDragSessionActive ? "arrow.down.circle.fill" : "hand.tap")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(viewModel.isDragSessionActive ? "Drop now or click a chip" : "Click to open actions or drag files onto the notch")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 2)
     }
 
     private var header: some View {
