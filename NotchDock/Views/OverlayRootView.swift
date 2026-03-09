@@ -6,9 +6,7 @@ struct OverlayRootView: View {
     @State private var isCapsuleDropTargeted = false
 
     private var activeActions: [WorkActionKind] {
-        let primary = viewModel.dropPlan.recommendedAction.map { [$0] } ?? []
-        let merged = primary + viewModel.dropPlan.secondaryActions
-        return merged.isEmpty ? WorkActionKind.allCases : merged
+        viewModel.presentedActions.isEmpty ? WorkActionKind.allCases : viewModel.presentedActions
     }
 
     private var shouldRenderCapsule: Bool {
@@ -62,6 +60,7 @@ struct OverlayRootView: View {
                     interactionMode: viewModel.interactionMode,
                     targetedAction: viewModel.targetedAction,
                     showsRecommendedAction: viewModel.isRecommendedActionVisible,
+                    disabledReasons: viewModel.actionDisabledReasons,
                     onRunAction: { action in
                         Task { @MainActor in
                             await viewModel.performActionFromPicker(action)

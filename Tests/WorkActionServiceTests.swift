@@ -7,6 +7,7 @@ final class WorkActionServiceTests: XCTestCase {
     private var tempRoot: URL!
     private var io: FileIOService!
     private var service: WorkActionService!
+    private var officeConverter: MockOfficeConverter!
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -14,7 +15,8 @@ final class WorkActionServiceTests: XCTestCase {
             .appendingPathComponent("NotchDockTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
         io = FileIOService(fileManager: .default, outputRoot: tempRoot.appendingPathComponent("Out", isDirectory: true))
-        service = WorkActionService(io: io)
+        officeConverter = MockOfficeConverter()
+        service = WorkActionService(io: io, officeConverter: officeConverter)
     }
 
     override func tearDownWithError() throws {
@@ -22,6 +24,7 @@ final class WorkActionServiceTests: XCTestCase {
         tempRoot = nil
         io = nil
         service = nil
+        officeConverter = nil
         try super.tearDownWithError()
     }
 
@@ -71,6 +74,54 @@ final class WorkActionServiceTests: XCTestCase {
         XCTAssertFalse(text.isEmpty)
     }
 
+    func testClassifyTextDocumentsPrefersTextToPDF() throws {
+        let source = tempRoot.appendingPathComponent("note.md")
+        try Data("# heading".utf8).write(to: source)
+        let plan = service.classify([source])
+        XCTAssertEqual(plan.kind, .textDocuments)
+        XCTAssertEqual(plan.recommendedAction, .textDocumentToPDF)
+    }
+
+    func testClassifyOfficeDocumentsPrefersOfficeToPDF() throws {
+        let source = tempRoot.appendingPathComponent("deck.docx")
+        try Data("office".utf8).write(to: source)
+        let plan = service.classify([source])
+        XCTAssertEqual(plan.kind, .officeDocuments)
+        XCTAssertEqual(plan.recommendedAction, .officeToPDF)
+    }
+
+    func testTextDocumentToPDFCreatesOutput() async throws {
+        let source = tempRoot.appendingPathComponent("note.txt")
+        try Data("Plain text".utf8).write(to: source)
+        let result = try await service.execute(.textDocumentToPDF, inputs: [source])
+        XCTAssertEqual(result.outputs.first?.pathExtension, "pdf")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.outputs[0].path))
+    }
+
+    func testOfficeToPDFUsesConverter() async throws {
+        let source = tempRoot.appendingPathComponent("slides.docx")
+        try Data("office".utf8).write(to: source)
+        let result = try await service.execute(.officeToPDF, inputs: [source])
+        XCTAssertEqual(result.outputs.first?.pathExtension, "pdf")
+        XCTAssertEqual(officeConverter.convertedInputs, [source])
+    }
+
+    func testOfficeToPDFReturnsInstallMessageWhenUnavailable() {
+        officeConverter.isAvailableValue = false
+        let reason = service.unavailableReason(for: .officeToPDF)
+        XCTAssertEqual(reason, "Install LibreOffice to enable Office -> PDF")
+    }
+
+    func testImageFormatConversionsCreateFiles() async throws {
+        let png = try makeImage(name: "a.png")
+        let jpegResult = try await service.execute(.imageToJPEG, inputs: [png])
+        XCTAssertEqual(jpegResult.outputs.first?.pathExtension, "jpg")
+
+        let jpeg = jpegResult.outputs[0]
+        let pngResult = try await service.execute(.imageToPNG, inputs: [jpeg])
+        XCTAssertEqual(pngResult.outputs.first?.pathExtension, "png")
+    }
+
     private func makeImage(name: String) throws -> URL {
         let url = tempRoot.appendingPathComponent(name)
         let image = NSImage(size: NSSize(width: 180, height: 180))
@@ -111,5 +162,31 @@ final class WorkActionServiceTests: XCTestCase {
         context.closePDF()
         try data.write(to: url, options: .atomic)
         return url
+    }
+}
+
+private final class MockOfficeConverter: OfficeConverting {
+    var isAvailableValue = true
+    var convertedInputs: [URL] = []
+
+    var isAvailable: Bool { isAvailableValue }
+    var unavailableReason: String? {
+        isAvailableValue ? nil : "Install LibreOffice to enable Office -> PDF"
+    }
+
+    func convertToPDF(inputs: [URL], outputDir: URL, io: FileIOService) throws -> [URL] {
+        guard isAvailableValue else {
+            throw WorkActionError.operationFailed(unavailableReason ?? "Unavailable")
+        }
+        convertedInputs = inputs
+        return try inputs.map { input in
+            let output = io.uniqueFileURL(
+                in: outputDir,
+                stem: "\(input.deletingPathExtension().lastPathComponent)__officeToPDF__v1",
+                ext: "pdf"
+            )
+            try Data("pdf".utf8).write(to: output)
+            return output
+        }
     }
 }
