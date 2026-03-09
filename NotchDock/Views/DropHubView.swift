@@ -7,6 +7,7 @@ struct DropHubView: View {
     let interactionMode: OverlayInteractionMode
     let targetedAction: WorkActionKind?
     let showsRecommendedAction: Bool
+    let disabledReasons: [WorkActionKind: String]
     let onRunAction: (WorkActionKind) -> Void
     let onTargetChange: (WorkActionKind?) -> Void
     let onDrop: (WorkActionKind, [URL]) -> Void
@@ -23,19 +24,35 @@ struct DropHubView: View {
                     .foregroundStyle(.tertiary)
             }
 
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(actions) { action in
-                    DropChip(
-                        action: action,
-                        highlighted: targetedAction == action,
-                        emphasized: showsRecommendedAction && recommendedAction == action,
-                        interactionMode: interactionMode,
-                        onSelect: { onRunAction(action) },
-                        onTargetChange: onTargetChange,
-                        onDrop: { urls in onDrop(action, urls) }
-                    )
+            ForEach(sectionedActions) { section in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(section.category.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+
+                    LazyVGrid(columns: columns, spacing: 10) {
+                        ForEach(section.actions) { action in
+                            DropChip(
+                                action: action,
+                                highlighted: targetedAction == action,
+                                emphasized: showsRecommendedAction && recommendedAction == action,
+                                interactionMode: interactionMode,
+                                disabledReason: disabledReasons[action],
+                                onSelect: { onRunAction(action) },
+                                onTargetChange: onTargetChange,
+                                onDrop: { urls in onDrop(action, urls) }
+                            )
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    private var sectionedActions: [ActionSection] {
+        WorkActionCategory.allCases.compactMap { category in
+            let items = actions.filter { $0.category == category }
+            return items.isEmpty ? nil : ActionSection(category: category, actions: items)
         }
     }
 
@@ -46,11 +63,19 @@ struct DropHubView: View {
     }
 }
 
+private struct ActionSection: Identifiable {
+    let category: WorkActionCategory
+    let actions: [WorkActionKind]
+
+    var id: WorkActionCategory { category }
+}
+
 private struct DropChip: View {
     let action: WorkActionKind
     let highlighted: Bool
     let emphasized: Bool
     let interactionMode: OverlayInteractionMode
+    let disabledReason: String?
     let onSelect: () -> Void
     let onTargetChange: (WorkActionKind?) -> Void
     let onDrop: ([URL]) -> Void
@@ -106,11 +131,15 @@ private struct DropChip: View {
             .shadow(color: .black.opacity(highlighted || isTargeted ? 0.18 : 0.08), radius: highlighted || isTargeted ? 12 : 6, x: 0, y: highlighted || isTargeted ? 8 : 3)
         }
         .buttonStyle(.plain)
+        .disabled(disabledReason != nil)
+        .opacity(disabledReason == nil ? 1 : 0.6)
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargeted) { providers in
+            guard disabledReason == nil else { return false }
             loadURLs(providers: providers, onComplete: onDrop)
             return true
         }
         .onChange(of: isTargeted) { _, value in
+            guard disabledReason == nil else { return }
             onTargetChange(value ? action : nil)
         }
         .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.84), value: highlighted)
@@ -118,6 +147,9 @@ private struct DropChip: View {
     }
 
     private var subtitle: String {
+        if let disabledReason {
+            return disabledReason
+        }
         if highlighted || isTargeted {
             return "Release to run"
         }

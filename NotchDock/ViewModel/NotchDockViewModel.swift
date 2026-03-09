@@ -16,6 +16,8 @@ final class NotchDockViewModel: ObservableObject {
     @Published private(set) var selectedIconIDs: Set<String> = []
     @Published private(set) var interactionMode: OverlayInteractionMode = .click
     @Published private(set) var panelSize: CGSize = OverlayState.armed.panelSize
+    @Published private(set) var presentedActions: [WorkActionKind] = []
+    @Published private(set) var actionDisabledReasons: [WorkActionKind: String] = [:]
     @Published var dropPlan = DropPlan(kind: .unsupported, recommendedAction: nil, secondaryActions: [])
     @Published var toast: OverlayToast?
     @Published var targetedAction: WorkActionKind?
@@ -238,6 +240,10 @@ final class NotchDockViewModel: ObservableObject {
     }
 
     func performActionFromPicker(_ action: WorkActionKind) async {
+        if let reason = actionDisabledReasons[action] {
+            showToast(reason, isError: true)
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
@@ -318,6 +324,16 @@ final class NotchDockViewModel: ObservableObject {
         if presentationState != nextState {
             presentationState = nextState
         }
+        let nextActions = resolvedPresentedActions()
+        if presentedActions != nextActions {
+            presentedActions = nextActions
+        }
+        let nextDisabledReasons = Dictionary(uniqueKeysWithValues: WorkActionKind.allCases.compactMap { action in
+            actionService.unavailableReason(for: action).map { (action, $0) }
+        })
+        if actionDisabledReasons != nextDisabledReasons {
+            actionDisabledReasons = nextDisabledReasons
+        }
         let nextPanelSize = resolvedPanelSize(for: nextState)
         if panelSize != nextPanelSize {
             panelSize = nextPanelSize
@@ -352,7 +368,7 @@ final class NotchDockViewModel: ObservableObject {
             let headerHeight: CGFloat = 32
             let hubHeaderHeight: CGFloat = 22
             let columns: CGFloat = interactionMode == .drag ? 3 : 2
-            let actionCount = CGFloat(max(1, dropActions.count))
+            let actionCount = CGFloat(max(1, presentedActions.count))
             let rows = ceil(actionCount / columns)
             let chipHeight = rows * 68
             let totalHeight = verticalPadding + headerHeight + iconHeight + hubHeaderHeight + chipHeight + toastHeight + 34
@@ -366,6 +382,19 @@ final class NotchDockViewModel: ObservableObject {
         let primary = dropPlan.recommendedAction.map { [$0] } ?? []
         let merged = primary + dropPlan.secondaryActions
         return merged.isEmpty ? WorkActionKind.allCases : merged
+    }
+
+    private func resolvedPresentedActions() -> [WorkActionKind] {
+        if interactionMode == .click {
+            return WorkActionKind.allCases
+        }
+        let source = dropActions
+        guard let recommended = dropPlan.recommendedAction else {
+            return Array(source.prefix(6))
+        }
+        let peers = source.filter { $0.category == recommended.category && $0 != recommended }
+        let organize = source.filter { $0.category == .organize }
+        return Array(([recommended] + peers.prefix(2) + organize.prefix(1)).uniqued())
     }
 
     private func scheduleLeaveGrace() {
@@ -437,5 +466,12 @@ final class NotchDockViewModel: ObservableObject {
         default:
             return .interactiveSpring(response: 0.26, dampingFraction: 0.86, blendDuration: 0.1)
         }
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

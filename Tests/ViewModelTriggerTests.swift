@@ -165,4 +165,9 @@ private final class DummyActionService: WorkActionExecuting {
         _ = token
         return true
     }
+
+    func unavailableReason(for action: WorkActionKind) -> String? {
+        _ = action
+        return nil
+    }
 }

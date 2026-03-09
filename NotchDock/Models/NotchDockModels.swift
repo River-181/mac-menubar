@@ -86,6 +86,12 @@ struct DropTelemetry: Equatable {
 enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
     case imageToPDF
     case pdfToImages
+    case officeToPDF
+    case textDocumentToPDF
+    case imageToJPEG
+    case imageToPNG
+    case imageToHEIC
+    case imageToWebP
     case compressZip
     case extractZip
     case optimizeImages
@@ -100,6 +106,12 @@ enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .imageToPDF: "Image -> PDF"
         case .pdfToImages: "PDF -> Images"
+        case .officeToPDF: "Office -> PDF"
+        case .textDocumentToPDF: "Text -> PDF"
+        case .imageToJPEG: "Image -> JPEG"
+        case .imageToPNG: "Image -> PNG"
+        case .imageToHEIC: "Image -> HEIC"
+        case .imageToWebP: "Image -> WebP"
         case .compressZip: "Compress ZIP"
         case .extractZip: "Extract ZIP"
         case .optimizeImages: "Optimize Images"
@@ -114,6 +126,12 @@ enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .imageToPDF: "photo.on.rectangle.angled"
         case .pdfToImages: "doc.on.doc"
+        case .officeToPDF: "doc.richtext"
+        case .textDocumentToPDF: "text.document"
+        case .imageToJPEG: "photo"
+        case .imageToPNG: "photo.stack"
+        case .imageToHEIC: "sparkles.tv"
+        case .imageToWebP: "globe"
         case .compressZip: "archivebox"
         case .extractZip: "tray.and.arrow.down"
         case .optimizeImages: "wand.and.stars"
@@ -123,14 +141,43 @@ enum WorkActionKind: String, Codable, CaseIterable, Identifiable {
         case .moveToTrash: "trash"
         }
     }
+
+    var category: WorkActionCategory {
+        switch self {
+        case .imageToPDF, .pdfToImages, .officeToPDF, .textDocumentToPDF, .imageToJPEG, .imageToPNG, .imageToHEIC, .imageToWebP:
+            return .convert
+        case .compressZip, .extractZip, .optimizeImages, .optimizePDFKeepText, .resizeImages:
+            return .compress
+        case .sendToWorkbench, .moveToTrash:
+            return .organize
+        }
+    }
 }
 
 enum DropContentKind: Equatable {
     case images
     case pdfs
+    case textDocuments
+    case officeDocuments
     case zipArchives
     case mixed
     case unsupported
+}
+
+enum WorkActionCategory: String, CaseIterable, Identifiable {
+    case convert
+    case compress
+    case organize
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .convert: "Convert"
+        case .compress: "Compress"
+        case .organize: "Organize"
+        }
+    }
 }
 
 struct DropPlan: Equatable {
@@ -192,6 +239,7 @@ protocol WorkActionExecuting: AnyObject {
     func classify(_ inputs: [URL]) -> DropPlan
     func execute(_ action: WorkActionKind, inputs: [URL]) async throws -> DropExecutionResult
     func undo(_ token: UndoToken) async -> Bool
+    func unavailableReason(for action: WorkActionKind) -> String?
 }
 
 protocol IconSourceProviding: AnyObject {
@@ -226,10 +274,12 @@ protocol DragPipelining: AnyObject {
 extension WorkActionKind {
     var acceptedTypes: [UTType] {
         switch self {
-        case .imageToPDF, .optimizeImages, .resizeImages:
+        case .imageToPDF, .imageToJPEG, .imageToPNG, .imageToHEIC, .imageToWebP, .optimizeImages, .resizeImages:
             [.image]
         case .pdfToImages, .optimizePDFKeepText:
             [.pdf]
+        case .officeToPDF, .textDocumentToPDF:
+            [.data]
         case .extractZip:
             [.zip]
         case .compressZip, .sendToWorkbench, .moveToTrash:
