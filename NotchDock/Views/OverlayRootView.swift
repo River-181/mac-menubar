@@ -90,6 +90,9 @@ struct OverlayRootView: View {
         .padding(.vertical, 8)
         .background(capsuleBackground)
         .overlay(capsuleOutline)
+        .overlay(alignment: .top) {
+            notchBridge
+        }
         .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 8)
         .scaleEffect(viewModel.presentationState == .armed ? 1.02 : 1)
         .contentShape(Capsule(style: .continuous))
@@ -114,12 +117,24 @@ struct OverlayRootView: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                .white.opacity(viewModel.isDragSessionActive ? 0.15 : 0.1),
-                                .white.opacity(0.04)
+                                .white.opacity(viewModel.isDragSessionActive ? 0.17 : 0.11),
+                                .white.opacity(0.06),
+                                .clear
                             ],
                             startPoint: .top,
                             endPoint: .bottom
                         )
+                    )
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .fill(.black.opacity(0.06))
+                    .blur(radius: 22)
+                    .offset(y: -18)
+                    .mask(
+                        Capsule(style: .continuous)
+                            .frame(height: 28)
+                            .offset(y: -6)
                     )
             )
     }
@@ -132,6 +147,31 @@ struct OverlayRootView: View {
                     .stroke(Color.white.opacity(viewModel.targetedAction == nil ? 0 : 0.16), lineWidth: 2)
                     .blur(radius: 6)
             )
+    }
+
+    private var notchBridge: some View {
+        Capsule(style: .continuous)
+            .fill(.black.opacity(0.90))
+            .frame(width: bridgeWidth, height: 18)
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(.white.opacity(0.06), lineWidth: 1)
+            )
+            .offset(y: -11)
+            .shadow(color: .black.opacity(0.25), radius: 10, x: 0, y: 6)
+    }
+
+    private var bridgeWidth: CGFloat {
+        switch viewModel.presentationState {
+        case .armed:
+            return 118
+        case .peek:
+            return 138
+        case .expand, .processing:
+            return 168
+        case .hidden:
+            return 110
+        }
     }
 
     private var armedHint: some View {
@@ -153,7 +193,7 @@ struct OverlayRootView: View {
             Image(systemName: viewModel.isDragSessionActive ? "arrow.down.circle.fill" : "hand.tap")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
-            Text(viewModel.isDragSessionActive ? "Drop now or click a chip" : "Click to open actions or drag files onto the notch")
+            Text(viewModel.isDragSessionActive ? "Drop now or refine the target below" : "Click for the full hub or drag files onto the notch")
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
@@ -167,7 +207,7 @@ struct OverlayRootView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
-            Text("Compact")
+            Text(viewModel.interactionMode == .drag ? "Drag Flow" : "Compact")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
             Button {

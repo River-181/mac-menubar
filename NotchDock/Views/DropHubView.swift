@@ -13,16 +13,18 @@ struct DropHubView: View {
     let onDrop: (WorkActionKind, [URL]) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text("Drop actions")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                Text("Drag onto a chip or click to pick files")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.tertiary)
+        Group {
+            if interactionMode == .drag {
+                dragLayout
+            } else {
+                clickLayout
             }
+        }
+    }
+
+    private var clickLayout: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            hubHeader(title: "Work Hub", subtitle: "Click a chip or drop files onto it")
 
             ForEach(sectionedActions) { section in
                 VStack(alignment: .leading, spacing: 8) {
@@ -32,20 +34,56 @@ struct DropHubView: View {
 
                     LazyVGrid(columns: columns, spacing: 10) {
                         ForEach(section.actions) { action in
-                            DropChip(
-                                action: action,
-                                highlighted: targetedAction == action,
-                                emphasized: showsRecommendedAction && recommendedAction == action,
-                                interactionMode: interactionMode,
-                                disabledReason: disabledReasons[action],
-                                onSelect: { onRunAction(action) },
-                                onTargetChange: onTargetChange,
-                                onDrop: { urls in onDrop(action, urls) }
-                            )
+                            chip(for: action, hero: false)
                         }
                     }
                 }
             }
+        }
+    }
+
+    private var dragLayout: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            hubHeader(title: "Drop to Run", subtitle: "Keep dragging over the notch")
+
+            if let recommendedAction {
+                chip(for: recommendedAction, hero: true)
+            }
+
+            let secondary = dragSecondaryActions
+            if !secondary.isEmpty {
+                LazyVGrid(columns: dragColumns, spacing: 10) {
+                    ForEach(secondary) { action in
+                        chip(for: action, hero: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private func chip(for action: WorkActionKind, hero: Bool) -> some View {
+        DropChip(
+            action: action,
+            highlighted: targetedAction == action,
+            emphasized: showsRecommendedAction && recommendedAction == action,
+            interactionMode: interactionMode,
+            disabledReason: disabledReasons[action],
+            isHero: hero,
+            onSelect: { onRunAction(action) },
+            onTargetChange: onTargetChange,
+            onDrop: { urls in onDrop(action, urls) }
+        )
+    }
+
+    private func hubHeader(title: String, subtitle: String) -> some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Text(subtitle)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.tertiary)
         }
     }
 
@@ -57,9 +95,17 @@ struct DropHubView: View {
     }
 
     private var columns: [GridItem] {
-        let minimum: CGFloat = interactionMode == .drag ? 220 : 280
-        let maximum: CGFloat = interactionMode == .drag ? 280 : 360
+        let minimum: CGFloat = 280
+        let maximum: CGFloat = 360
         return [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: 10, alignment: .top)]
+    }
+
+    private var dragColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 10, alignment: .top)]
+    }
+
+    private var dragSecondaryActions: [WorkActionKind] {
+        actions.filter { $0 != recommendedAction }
     }
 }
 
@@ -76,6 +122,7 @@ private struct DropChip: View {
     let emphasized: Bool
     let interactionMode: OverlayInteractionMode
     let disabledReason: String?
+    let isHero: Bool
     let onSelect: () -> Void
     let onTargetChange: (WorkActionKind?) -> Void
     let onDrop: ([URL]) -> Void
@@ -86,8 +133,8 @@ private struct DropChip: View {
         Button(action: onSelect) {
             HStack(spacing: 10) {
                 Image(systemName: action.symbolName)
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .font(.system(size: isHero ? 16 : 15, weight: .semibold))
+                    .frame(width: isHero ? 32 : 28, height: isHero ? 32 : 28)
                     .background(
                         Circle()
                             .fill(iconBackground)
@@ -96,7 +143,7 @@ private struct DropChip: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(action.title)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.system(size: isHero ? 15 : 14, weight: .semibold))
                             .lineLimit(1)
                         if emphasized && !highlighted && !isTargeted {
                             Text("Best")
@@ -115,9 +162,9 @@ private struct DropChip: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .frame(minHeight: 56)
+            .padding(.horizontal, isHero ? 16 : 14)
+            .padding(.vertical, isHero ? 14 : 12)
+            .frame(minHeight: isHero ? 64 : 56)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(backgroundFill)
@@ -128,7 +175,7 @@ private struct DropChip: View {
             )
             .scaleEffect(highlighted || isTargeted ? 1.035 : 1)
             .offset(y: highlighted || isTargeted ? -1 : 0)
-            .shadow(color: .black.opacity(highlighted || isTargeted ? 0.18 : 0.08), radius: highlighted || isTargeted ? 12 : 6, x: 0, y: highlighted || isTargeted ? 8 : 3)
+            .shadow(color: .black.opacity(highlighted || isTargeted ? 0.18 : 0.08), radius: highlighted || isTargeted ? 12 : (isHero ? 10 : 6), x: 0, y: highlighted || isTargeted ? 8 : (isHero ? 5 : 3))
         }
         .buttonStyle(.plain)
         .disabled(disabledReason != nil)
@@ -156,12 +203,15 @@ private struct DropChip: View {
         if emphasized {
             return "Recommended for current files"
         }
-        return interactionMode == .drag ? "Drag onto this chip" : "Click or drop to run"
+        return interactionMode == .drag ? "Keep dragging to target" : "Click or drop to run"
     }
 
     private var backgroundFill: Color {
         if highlighted || isTargeted {
             return .white.opacity(0.22)
+        }
+        if isHero {
+            return .white.opacity(0.16)
         }
         if emphasized {
             return .white.opacity(0.14)
@@ -182,6 +232,9 @@ private struct DropChip: View {
     private var iconBackground: Color {
         if highlighted || isTargeted {
             return .white.opacity(0.22)
+        }
+        if isHero {
+            return .white.opacity(0.16)
         }
         return .white.opacity(0.12)
     }

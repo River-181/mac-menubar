@@ -390,11 +390,12 @@ final class NotchDockViewModel: ObservableObject {
         }
         let source = dropActions
         guard let recommended = dropPlan.recommendedAction else {
-            return Array(source.prefix(6))
+            return Array(source.prefix(4))
         }
         let peers = source.filter { $0.category == recommended.category && $0 != recommended }
         let organize = source.filter { $0.category == .organize }
-        return Array(([recommended] + peers.prefix(2) + organize.prefix(1)).uniqued())
+        let convert = source.filter { $0.category == .convert && $0 != recommended }
+        return Array(([recommended] + peers.prefix(1) + convert.prefix(1) + organize.prefix(1)).uniqued())
     }
 
     private func scheduleLeaveGrace() {
