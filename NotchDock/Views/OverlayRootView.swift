@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct OverlayRootView: View {
     @ObservedObject var viewModel: NotchDockViewModel
     @State private var isCapsuleDropTargeted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     private var activeActions: [WorkActionKind] {
         viewModel.presentedActions.isEmpty ? WorkActionKind.allCases : viewModel.presentedActions
@@ -16,13 +18,25 @@ struct OverlayRootView: View {
         return viewModel.presentationState != .hidden
     }
 
+    // MARK: - Reduce-motion helpers
+
+    private var capsuleTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+    }
+
+    private var hubTransition: AnyTransition {
+        reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top))
+    }
+
+    // MARK: - Body
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.clear.allowsHitTesting(false)
             if shouldRenderCapsule {
                 capsule
                     .padding(.top, 8)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                    .transition(capsuleTransition)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -32,6 +46,8 @@ struct OverlayRootView: View {
         .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.82, blendDuration: 0.08), value: viewModel.targetedAction)
     }
 
+    // MARK: - Capsule
+
     private var capsule: some View {
         VStack(spacing: 10) {
             if viewModel.presentationState == .expand || viewModel.presentationState == .processing {
@@ -40,12 +56,6 @@ struct OverlayRootView: View {
 
             if viewModel.presentationState == .armed {
                 armedHint
-            }
-
-            if viewModel.presentationState == .peek || viewModel.presentationState == .expand || viewModel.presentationState == .processing {
-                IconStripView(icons: viewModel.visibleIcons, state: viewModel.presentationState)
-                    .padding(.horizontal, 12)
-                    .padding(.top, viewModel.presentationState == .peek ? 8 : 4)
             }
 
             if viewModel.presentationState == .peek && !viewModel.isDragSessionActive {
@@ -77,7 +87,7 @@ struct OverlayRootView: View {
                 )
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(hubTransition)
             }
 
             if let toast = viewModel.toast {
@@ -93,21 +103,26 @@ struct OverlayRootView: View {
         .overlay(alignment: .top) {
             notchBridge
         }
-        .shadow(color: .black.opacity(0.22), radius: 14, x: 0, y: 8)
-        .scaleEffect(viewModel.presentationState == .armed ? 1.02 : 1)
+        .shadow(color: .black.opacity(0.30), radius: 20, x: 0, y: 12)
+        .shadow(color: .black.opacity(0.10), radius: 4, x: 0, y: 2)
+        .scaleEffect((!reduceMotion && viewModel.presentationState == .armed) ? 1.02 : 1)
         .contentShape(Capsule(style: .continuous))
         .onTapGesture {
             viewModel.toggleExpand()
         }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isCapsuleDropTargeted) { providers in
-            loadURLs(from: providers) { urls in
+            DropPayload.loadFileURLs(from: providers) { urls in
                 Task { @MainActor in
                     await viewModel.performDrop(inputs: urls, target: nil)
                 }
             }
             return true
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("NotchDock work hub")
     }
+
+    // MARK: - Background & outline
 
     private var capsuleBackground: some View {
         Capsule(style: .continuous)
@@ -139,15 +154,28 @@ struct OverlayRootView: View {
             )
     }
 
+    private var borderBaseOpacity: Double {
+        let active = viewModel.isDragSessionActive
+        return colorScheme == .dark
+            ? (active ? 0.30 : 0.22)
+            : (active ? 0.18 : 0.12)
+    }
+
+    private var borderBaseColor: Color {
+        colorScheme == .dark ? .white : Color(white: 0.3)
+    }
+
     private var capsuleOutline: some View {
         Capsule(style: .continuous)
-            .stroke(Color.white.opacity(viewModel.isDragSessionActive ? 0.28 : 0.22), lineWidth: 1)
+            .strokeBorder(borderBaseColor.opacity(borderBaseOpacity), lineWidth: 1)
             .overlay(
                 Capsule(style: .continuous)
                     .stroke(Color.white.opacity(viewModel.targetedAction == nil ? 0 : 0.16), lineWidth: 2)
                     .blur(radius: 6)
             )
     }
+
+    // MARK: - Notch bridge
 
     private var notchBridge: some View {
         Capsule(style: .continuous)
@@ -173,6 +201,8 @@ struct OverlayRootView: View {
             return 110
         }
     }
+
+    // MARK: - Sub-views
 
     private var armedHint: some View {
         HStack(spacing: 10) {
@@ -238,40 +268,11 @@ struct OverlayRootView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+                .accessibilityLabel("Undo last action")
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(.regularMaterial))
-    }
-
-    private func loadURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var urls: [URL] = []
-
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                var resolved: URL?
-                if let data = item as? Data {
-                    resolved = URL(dataRepresentation: data, relativeTo: nil)
-                } else if let url = item as? URL {
-                    resolved = url
-                } else if let string = item as? String {
-                    resolved = URL(string: string)
-                }
-                if let resolved {
-                    lock.lock()
-                    urls.append(resolved)
-                    lock.unlock()
-                }
-            }
-        }
-
-        group.notify(queue: .main) {
-            completion(urls)
-        }
     }
 }

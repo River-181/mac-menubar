@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Developer ID distribution — App Sandbox is intentionally NOT enabled. -->
+    <!-- Hardened Runtime is active (ENABLE_HARDENED_RUNTIME = YES in project.yml). -->
+
+    <!-- com.apple.security.cs.allow-jit: false — JIT compilation is not required;
+         listed explicitly as false to document the decision. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+
+    <!-- com.apple.security.cs.disable-library-validation: true — required because
+         the app spawns LibreOffice (a third-party tool) and may load dynamic
+         libraries that are not signed by Apple or this team. Without this exception
+         the Hardened Runtime would block those load operations at runtime. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>

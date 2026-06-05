@@ -5,66 +5,86 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var viewModel: NotchDockViewModel
 
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+    }
+
     var body: some View {
         Form {
-            Section("Trigger") {
-                Text("The overlay opens only when pointer enters the strict notch trigger zone.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                Text("Enter 35ms · Exit 100ms · Collapse grace 450ms")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Visible Icons") {
-                HStack {
-                    Text("Now showing")
-                    Spacer()
-                    Text("\(viewModel.visibleIcons.count) visible · \(viewModel.overflowIcons.count) overflow")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.footnote)
-
-                ForEach(viewModel.candidateIcons) { icon in
-                    HStack {
-                        Label(icon.title, systemImage: icon.symbolName)
-                        Spacer()
-                        Text(icon.bucket == .pinned ? "Pinned" : "Shelf")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Toggle(
-                            icon.title,
-                            isOn: Binding(
-                                get: { viewModel.selectedIconIDs.contains(icon.id) },
-                                set: { viewModel.setIconEnabled(icon.id, enabled: $0) }
-                            )
-                        )
-                        .labelsHidden()
-                    }
-                }
-            }
-
-            Section("Keyboard Shortcut") {
-                KeyboardShortcuts.Recorder("Toggle Overlay", name: .toggleExpand)
-            }
-
+            // MARK: Launch
             Section("Launch") {
-                Toggle("Launch at login", isOn: Binding(
-                    get: { LaunchAtLogin.isEnabled },
-                    set: { LaunchAtLogin.isEnabled = $0 }
-                ))
+                LaunchAtLogin.Toggle("Launch at Login")
             }
 
-            Section("About") {
-                Text("NotchDock v1 hard reset focuses on stable drag hub and compact icon dock.")
+            // MARK: Keyboard Shortcuts
+            Section("Keyboard Shortcuts") {
+                KeyboardShortcuts.Recorder("Toggle hub", name: .toggleExpand)
+                KeyboardShortcuts.Recorder("Undo last action", name: .undoLastAction)
+            }
+
+            // MARK: Performance
+            Section("Performance") {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(viewModel.perfSummaryText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Reset Counters") {
+                        viewModel.resetPerfSnapshot()
+                    }
+                    .buttonStyle(.borderless)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                }
+            }
+
+            // MARK: Accessibility
+            Section("Accessibility") {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Global shortcuts need Accessibility permission.")
+                            .font(.footnote)
+                        Text("If hotkeys aren't responding, grant access in System Settings.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Link(
+                        "Enable\u{2026}",
+                        destination: URL(
+                            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+                        )!
+                    )
+                    .font(.footnote)
+                }
+            }
+
+            // MARK: About
+            Section("About") {
+                HStack(alignment: .top, spacing: 12) {
+                    if let appIcon = NSImage(named: NSImage.applicationIconName) {
+                        Image(nsImage: appIcon)
+                            .resizable()
+                            .frame(width: 48, height: 48)
+                            .cornerRadius(10)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("NotchDock")
+                            .font(.headline)
+                        Text("Version \(appVersion)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text("A refined notch-native action hub for macOS.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Link("View on GitHub", destination: URL(string: "https://github.com/River-181/mac-menubar")!)
+                            .font(.footnote)
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 4)
             }
         }
-        .padding(20)
-        .frame(width: 460)
-        .task {
-            await viewModel.refreshIcons()
-        }
+        .formStyle(.grouped)
+        .frame(minWidth: 460)
     }
 }

@@ -459,8 +459,12 @@ final class WorkActionService: WorkActionExecuting {
         image.lockFocus()
         NSColor.white.setFill()
         NSBezierPath(rect: NSRect(origin: .zero, size: scaledSize)).fill()
-        NSGraphicsContext.current?.cgContext.scaleBy(x: 2, y: 2)
-        page.draw(with: .mediaBox, to: NSGraphicsContext.current!.cgContext)
+        guard let cgContext = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            throw WorkActionError.operationFailed("Unable to render PDF page.")
+        }
+        cgContext.scaleBy(x: 2, y: 2)
+        page.draw(with: .mediaBox, to: cgContext)
         image.unlockFocus()
 
         guard let cgImage = cgImage(from: image) else {
