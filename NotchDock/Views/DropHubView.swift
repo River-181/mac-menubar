@@ -94,14 +94,22 @@ struct DropHubView: View {
         }
     }
 
+    /// Two flexible columns so the grid produces 2 chips per row,
+    /// matching the ViewModel's panel-height assumption of ceil(count/2) rows.
     private var columns: [GridItem] {
-        let minimum: CGFloat = 280
-        let maximum: CGFloat = 360
-        return [GridItem(.adaptive(minimum: minimum, maximum: maximum), spacing: 10, alignment: .top)]
+        [
+            GridItem(.flexible(), spacing: 10, alignment: .top),
+            GridItem(.flexible(), spacing: 10, alignment: .top)
+        ]
     }
 
     private var dragColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 10, alignment: .top)]
+        // Fixed 3-column grid to match the panel-height math in NotchDockViewModel.
+        [
+            GridItem(.flexible(), spacing: 10, alignment: .top),
+            GridItem(.flexible(), spacing: 10, alignment: .top),
+            GridItem(.flexible(), spacing: 10, alignment: .top)
+        ]
     }
 
     private var dragSecondaryActions: [WorkActionKind] {
@@ -128,6 +136,25 @@ private struct DropChip: View {
     let onDrop: ([URL]) -> Void
 
     @State private var isTargeted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    // MARK: - Reduce-motion helpers
+
+    private var chipScale: CGFloat {
+        guard !reduceMotion else { return 1 }
+        return highlighted || isTargeted ? 1.035 : 1
+    }
+
+    private var chipYOffset: CGFloat {
+        guard !reduceMotion else { return 0 }
+        return highlighted || isTargeted ? -1 : 0
+    }
+
+    private var chipAnimation: Animation? {
+        reduceMotion ? Animation?.none : .interactiveSpring(response: 0.24, dampingFraction: 0.84)
+    }
+
+    // MARK: - Body
 
     var body: some View {
         Button(action: onSelect) {
@@ -173,24 +200,27 @@ private struct DropChip: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(borderColor, lineWidth: 1)
             )
-            .scaleEffect(highlighted || isTargeted ? 1.035 : 1)
-            .offset(y: highlighted || isTargeted ? -1 : 0)
+            .scaleEffect(chipScale)
+            .offset(y: chipYOffset)
             .shadow(color: .black.opacity(highlighted || isTargeted ? 0.18 : 0.08), radius: highlighted || isTargeted ? 12 : (isHero ? 10 : 6), x: 0, y: highlighted || isTargeted ? 8 : (isHero ? 5 : 3))
         }
         .buttonStyle(.plain)
         .disabled(disabledReason != nil)
         .opacity(disabledReason == nil ? 1 : 0.6)
+        .accessibilityLabel(action.title)
+        .accessibilityHint(disabledReason == nil ? "Runs this action on the dropped files" : "")
+        .accessibilityAddTraits(.isButton)
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isTargeted) { providers in
             guard disabledReason == nil else { return false }
-            loadURLs(providers: providers, onComplete: onDrop)
+            DropPayload.loadFileURLs(from: providers, completion: onDrop)
             return true
         }
         .onChange(of: isTargeted) { _, value in
             guard disabledReason == nil else { return }
             onTargetChange(value ? action : nil)
         }
-        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.84), value: highlighted)
-        .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.84), value: isTargeted)
+        .animation(chipAnimation, value: highlighted)
+        .animation(chipAnimation, value: isTargeted)
     }
 
     private var subtitle: String {
@@ -237,33 +267,5 @@ private struct DropChip: View {
             return .white.opacity(0.16)
         }
         return .white.opacity(0.12)
-    }
-
-    private func loadURLs(providers: [NSItemProvider], onComplete: @escaping ([URL]) -> Void) {
-        let group = DispatchGroup()
-        var urls: [URL] = []
-        let lock = NSLock()
-        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-            group.enter()
-            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                defer { group.leave() }
-                var output: URL?
-                if let data = item as? Data {
-                    output = URL(dataRepresentation: data, relativeTo: nil)
-                } else if let url = item as? URL {
-                    output = url
-                } else if let text = item as? String {
-                    output = URL(string: text)
-                }
-                if let output {
-                    lock.lock()
-                    urls.append(output)
-                    lock.unlock()
-                }
-            }
-        }
-        group.notify(queue: .main) {
-            onComplete(urls)
-        }
     }
 }

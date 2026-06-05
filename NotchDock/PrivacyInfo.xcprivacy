@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The app does not perform tracking. -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+
+    <!-- No tracking domains. -->
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!-- Required-reason APIs accessed by the app. -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- UserDefaults: used to persist user preferences (settings, shortcuts). -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <!-- CA92.1: Accessed to read/write the app's own user preferences. -->
+                <string>CA92.1</string>
+            </array>
+        </dict>
+
+        <!-- File timestamps: read when reporting reclaimed/saved bytes after
+             file conversions and compression (comparing file sizes via
+             attributesOfItem / fileSizeKey); also written to output files
+             placed in the user's Downloads folder. -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <!-- C617.1: Accessed to read/write file attributes for files the
+                     user selected or that the app created on the user's behalf. -->
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- Data collected by the app or its dependencies. -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array>
+        <!-- Crash data collected by the Sentry SDK for app stability diagnostics. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeCrashData</string>
+            <!-- Crash reports are not linked to user identity. -->
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <false/>
+            <!-- Crash data is not used for tracking. -->
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <!-- Used solely to improve app stability and fix crashes. -->
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

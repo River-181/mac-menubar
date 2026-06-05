@@ -8,9 +8,15 @@ final class HotkeyService {
                 viewModel.toggleExpand()
             }
         }
+        KeyboardShortcuts.onKeyUp(for: .undoLastAction) {
+            Task { @MainActor in
+                await viewModel.undoLastDangerousAction()
+            }
+        }
     }
 }
 
 extension KeyboardShortcuts.Name {
     static let toggleExpand = Self("toggleExpand", default: .init(.space, modifiers: [.option]))
+    static let undoLastAction = Self("undoLastAction", default: .init(.z, modifiers: [.option, .command]))
 }

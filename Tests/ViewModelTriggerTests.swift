@@ -55,8 +55,10 @@ final class ViewModelTriggerTests: XCTestCase {
             isDragging: true
         )
 
+        // Target action is cleared immediately even while the drag continues
         XCTAssertNil(viewModel.targetedAction)
-        XCTAssertEqual(viewModel.dropHubState, .idle)
+        // Session stays active while isDragging is true (fix A — session only ends when !isDragging)
+        XCTAssertTrue(viewModel.isDragSessionActive)
     }
 
     func testQuickTriggerFlapDoesNotEnterPeek() async {
@@ -127,20 +129,64 @@ final class ViewModelTriggerTests: XCTestCase {
         XCTAssertEqual(viewModel.overlayState, .expand)
     }
 
+    // MARK: - Fix A: Drag session must survive a momentary ineligible sample
+
+    func testDragSessionRemainsActiveAcrossIneligibleSampleWhileStillDragging() async {
+        let viewModel = makeViewModel()
+
+        // Establish a drag session inside the trigger
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: .zero, velocity: .zero, timestamp: 0),
+            isTriggerRawInside: true,
+            isTriggerOuterInside: true,
+            isCapsuleInside: false,
+            isDragging: true
+        )
+        XCTAssertTrue(viewModel.isDragSessionActive)
+
+        // Pointer momentarily outside trigger/capsule while drag is still in progress
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: CGPoint(x: 500, y: 500), velocity: .zero, timestamp: 0.1),
+            isTriggerRawInside: false,
+            isTriggerOuterInside: false,
+            isCapsuleInside: false,
+            isDragging: true
+        )
+
+        // Session must survive — endDragSession is only called when !isDragging
+        XCTAssertTrue(viewModel.isDragSessionActive, "Drag session must remain active while isDragging is true")
+    }
+
+    // MARK: - Fix C: Ending a drag while expanded must collapse the overlay to peek
+
+    func testEndDragSessionCollapseExpandToPeek() async {
+        let viewModel = makeViewModel()
+
+        // Drag inside trigger expands the hub
+        viewModel.ingestPointerSample(
+            DropTelemetry(point: .zero, velocity: .zero, timestamp: 0),
+            isTriggerRawInside: true,
+            isTriggerOuterInside: true,
+            isCapsuleInside: false,
+            isDragging: true
+        )
+        XCTAssertEqual(viewModel.overlayState, .expand)
+        XCTAssertTrue(viewModel.isDragSessionActive)
+
+        // User releases the drag without dropping — hub must collapse to peek
+        viewModel.endDragSession()
+
+        XCTAssertEqual(viewModel.overlayState, .peek, "Overlay must collapse to peek when drag ends in expand state")
+        XCTAssertFalse(viewModel.isDragSessionActive)
+    }
+
     private func makeViewModel() -> NotchDockViewModel {
         NotchDockViewModel(
-            iconSource: DummyIconSource(),
             actionService: DummyActionService(),
-            iconPolicy: IconPolicyEngine(),
             dropRouting: DropRoutingEngine(),
             triggerEngine: TriggerEngine(enterDelay: 0.035, exitDelay: 0.1)
         )
     }
-}
-
-private final class DummyIconSource: IconSourceProviding {
-    func fetchPinnedCandidates() async -> [DockIcon] { [] }
-    func fetchUserSelectedIcons() async -> [DockIcon] { [] }
 }
 
 private final class DummyActionService: WorkActionExecuting {

@@ -62,21 +62,6 @@ enum DropHubState: Equatable {
     case failure
 }
 
-enum IconBucket: String, Codable, CaseIterable {
-    case pinned
-    case shelf
-    case overflow
-}
-
-struct DockIcon: Identifiable, Codable, Hashable {
-    let id: String
-    let title: String
-    let symbolName: String
-    var bucket: IconBucket
-    var rank: Int
-    var isEnabled: Bool
-}
-
 struct DropTelemetry: Equatable {
     let point: CGPoint
     let velocity: CGVector
@@ -223,11 +208,6 @@ struct OverlayPerfSnapshot: Equatable {
     )
 }
 
-struct IconPolicyResult: Equatable {
-    let visible: [DockIcon]
-    let overflow: [DockIcon]
-}
-
 struct NotchLayoutSnapshot: Equatable {
     let hasNotch: Bool
     let notchWidth: CGFloat
@@ -242,11 +222,6 @@ protocol WorkActionExecuting: AnyObject {
     func unavailableReason(for action: WorkActionKind) -> String?
 }
 
-protocol IconSourceProviding: AnyObject {
-    func fetchPinnedCandidates() async -> [DockIcon]
-    func fetchUserSelectedIcons() async -> [DockIcon]
-}
-
 protocol NotchGeometryCalculating: AnyObject {
     func layoutSnapshot(screen: NSScreen) -> NotchLayoutSnapshot
     func panelFrame(screen: NSScreen, panelSize: CGSize) -> CGRect
@@ -254,10 +229,6 @@ protocol NotchGeometryCalculating: AnyObject {
 
 protocol DropRoutingProviding: AnyObject {
     func resolveAction(plan: DropPlan, targeted: WorkActionKind?, telemetry: DropTelemetry?) -> WorkActionKind?
-}
-
-protocol IconPolicyProviding: AnyObject {
-    func arrange(icons: [DockIcon], state: OverlayState) -> IconPolicyResult
 }
 
 protocol TriggerProviding: AnyObject {
@@ -284,6 +255,17 @@ extension WorkActionKind {
             [.zip]
         case .compressZip, .sendToWorkbench, .moveToTrash:
             [.data]
+        }
+    }
+}
+
+extension WorkActionKind {
+    var movesOriginalsToTrash: Bool {
+        switch self {
+        case .compressZip, .optimizeImages, .optimizePDFKeepText, .resizeImages, .moveToTrash:
+            return true
+        default:
+            return false
         }
     }
 }

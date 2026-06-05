@@ -11,6 +11,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         _ = notification
+        // Belt-and-suspenders alongside the Info.plist LSUIElement key.
+        NSApp.setActivationPolicy(.accessory)
         guard !isRunningUnitTests else { return }
         configureSentryIfPossible()
         let viewModel = NotchDockViewModel.shared
@@ -60,7 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !dsn.isEmpty else { return }
         SentrySDK.start { options in
             options.dsn = dsn
+            #if DEBUG
             options.environment = "development"
+            #else
+            options.environment = "production"
+            #endif
         }
     }
 }

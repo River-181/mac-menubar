@@ -12,9 +12,6 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     from: 2.3.0
-  Defaults:
-    url: https://github.com/sindresorhus/Defaults
-    from: 8.1.0
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation
     from: 0.9.19
@@ -41,11 +38,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.river.notchdock
         PRODUCT_NAME: NotchDock
         CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: NotchDock/NotchDock.entitlements
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        # TODO: Set DEVELOPMENT_TEAM to your Apple Developer Team ID (e.g. "ABCDE12345")
+        DEVELOPMENT_TEAM: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: KeyboardShortcuts
         product: KeyboardShortcuts
-      - package: Defaults
-        product: Defaults
       - package: ZIPFoundation
         product: ZIPFoundation
       - package: Sentry

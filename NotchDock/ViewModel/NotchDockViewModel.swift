@@ -10,10 +10,6 @@ final class NotchDockViewModel: ObservableObject {
     @Published private(set) var presentationState: OverlayState = .hidden
     @Published private(set) var dropHubState: DropHubState = .idle
     @Published private(set) var triggerState: TriggerState = .outside
-    @Published private(set) var visibleIcons: [DockIcon] = []
-    @Published private(set) var overflowIcons: [DockIcon] = []
-    @Published private(set) var candidateIcons: [DockIcon] = []
-    @Published private(set) var selectedIconIDs: Set<String> = []
     @Published private(set) var interactionMode: OverlayInteractionMode = .click
     @Published private(set) var panelSize: CGSize = OverlayState.armed.panelSize
     @Published private(set) var presentedActions: [WorkActionKind] = []
@@ -26,14 +22,12 @@ final class NotchDockViewModel: ObservableObject {
     @Published private(set) var isNearTopTrigger = false
     @Published private(set) var isPointerInsideOverlay = false
 
-    private let iconSource: IconSourceProviding
     private let actionService: WorkActionExecuting
-    private let iconPolicy: IconPolicyProviding
     private let dropRouting: DropRoutingProviding
     private let stateMachine = OverlayStateMachine()
     private let triggerEngine: TriggerProviding
 
-    private var allSelectedIcons: [DockIcon] = []
+    private var isDropExecutionInProgress = false
     private var leaveGraceWorkItem: DispatchWorkItem?
     private var toastDismissWorkItem: DispatchWorkItem?
     private var hoverLockWorkItem: DispatchWorkItem?
@@ -44,19 +38,14 @@ final class NotchDockViewModel: ObservableObject {
     private var lastDragSampleTimestamp: TimeInterval?
 
     init(
-        iconSource: IconSourceProviding = IconSourceService(),
         actionService: WorkActionExecuting = WorkActionService(),
-        iconPolicy: IconPolicyProviding = IconPolicyEngine(),
         dropRouting: DropRoutingProviding = DropRoutingEngine(),
         triggerEngine: TriggerProviding = TriggerEngine()
     ) {
-        self.iconSource = iconSource
         self.actionService = actionService
-        self.iconPolicy = iconPolicy
         self.dropRouting = dropRouting
         self.triggerEngine = triggerEngine
         refreshPresentation()
-        Task { await refreshIcons() }
     }
 
     var canUndoDangerousAction: Bool {
@@ -74,7 +63,6 @@ final class NotchDockViewModel: ObservableObject {
         withAnimation(animationForTransition(from: overlayState, to: next)) {
             overlayState = next
         }
-        recomputeIconLayout()
         refreshPresentation()
     }
 
@@ -87,10 +75,14 @@ final class NotchDockViewModel: ObservableObject {
     ) {
         isPointerInsideOverlay = isCapsuleInside
         if isTriggerRawInside && overlayState == .hidden {
-            overlayState = .armed
+            withAnimation(.interactiveSpring(response: 0.24, dampingFraction: 0.86, blendDuration: 0.1)) {
+                overlayState = .armed
+            }
             refreshPresentation()
         } else if !isTriggerRawInside && overlayState == .armed && !isDragging {
-            overlayState = .hidden
+            withAnimation(.easeOut(duration: 0.14)) {
+                overlayState = .hidden
+            }
             refreshPresentation()
         }
         isNearTopTrigger = isTriggerRawInside
@@ -123,9 +115,7 @@ final class NotchDockViewModel: ObservableObject {
             if isDragSessionActive {
                 clearTargetAction()
             }
-            if isDragging {
-                endDragSession()
-            } else {
+            if !isDragging {
                 endDragSession()
             }
         }
@@ -151,14 +141,18 @@ final class NotchDockViewModel: ObservableObject {
         isDragSessionActive = false
         interactionMode = .click
         clearTargetAction()
-        if overlayState == .processing {
-            transition(.dragEnded)
-        }
-        if case .focused = dropHubState {
-            dropHubState = .idle
-        }
-        if dropHubState == .preview {
-            dropHubState = .idle
+        if !isDropExecutionInProgress {
+            if overlayState == .processing {
+                transition(.dragEnded)
+            } else if overlayState == .expand {
+                transition(.esc)
+            }
+            if case .focused = dropHubState {
+                dropHubState = .idle
+            }
+            if dropHubState == .preview {
+                dropHubState = .idle
+            }
         }
         refreshPresentation()
     }
@@ -178,26 +172,30 @@ final class NotchDockViewModel: ObservableObject {
         transition(.esc)
     }
 
-    func setIconEnabled(_ iconID: String, enabled: Bool) {
-        (iconSource as? IconSourceService)?.setEnabled(iconID, enabled: enabled)
-        Task { await refreshIcons() }
-    }
-
-    func refreshIcons() async {
-        let candidates = await iconSource.fetchPinnedCandidates()
-        let selected = await iconSource.fetchUserSelectedIcons()
-        candidateIcons = candidates
-        allSelectedIcons = selected
-        selectedIconIDs = Set(selected.map(\.id))
-        recomputeIconLayout()
-        refreshPresentation()
-    }
-
     func performDrop(inputs: [URL], target: WorkActionKind?) async {
+        guard !isDropExecutionInProgress else { return }
+        isDropExecutionInProgress = true
+        defer { isDropExecutionInProgress = false }
+
         dropPlan = actionService.classify(inputs)
         guard let action = dropRouting.resolveAction(plan: dropPlan, targeted: target ?? targetedAction, telemetry: nil) else {
             showToast("No available action for dropped files.", isError: true)
             return
+        }
+
+        if action.movesOriginalsToTrash && !UserDefaults.standard.bool(forKey: "notchdock.hasShownTrashNotice") {
+            let alert = NSAlert()
+            alert.messageText = "Originals will be moved to Trash"
+            alert.informativeText = "This action moves your original files to the Trash. You can undo within 8 seconds using the undo button."
+            alert.addButton(withTitle: "Continue")
+            alert.addButton(withTitle: "Cancel")
+            NSApp.activate(ignoringOtherApps: true)
+            let response = alert.runModal()
+            if response != .alertFirstButtonReturn {
+                transition(.esc)
+                return
+            }
+            UserDefaults.standard.set(true, forKey: "notchdock.hasShownTrashNotice")
         }
 
         transition(.dropCommitted)
@@ -312,13 +310,6 @@ final class NotchDockViewModel: ObservableObject {
         hoverLockWorkItem = nil
     }
 
-    private func recomputeIconLayout() {
-        let arranged = iconPolicy.arrange(icons: allSelectedIcons, state: overlayState)
-        visibleIcons = arranged.visible
-        overflowIcons = arranged.overflow
-        refreshPresentation()
-    }
-
     private func refreshPresentation() {
         let nextState = resolvedPresentationState()
         if presentationState != nextState {
@@ -360,18 +351,16 @@ final class NotchDockViewModel: ObservableObject {
         case .armed:
             return CGSize(width: width, height: 58)
         case .peek:
-            let iconHeight: CGFloat = visibleIcons.isEmpty ? 0 : 44
             let hintHeight: CGFloat = isDragSessionActive ? 0 : 24
-            return CGSize(width: width, height: verticalPadding + iconHeight + hintHeight + toastHeight + 12)
+            return CGSize(width: width, height: verticalPadding + hintHeight + toastHeight + 12)
         case .expand, .processing:
-            let iconHeight: CGFloat = visibleIcons.isEmpty ? 0 : 44
             let headerHeight: CGFloat = 32
             let hubHeaderHeight: CGFloat = 22
             let columns: CGFloat = interactionMode == .drag ? 3 : 2
             let actionCount = CGFloat(max(1, presentedActions.count))
             let rows = ceil(actionCount / columns)
             let chipHeight = rows * 68
-            let totalHeight = verticalPadding + headerHeight + iconHeight + hubHeaderHeight + chipHeight + toastHeight + 34
+            let totalHeight = verticalPadding + headerHeight + hubHeaderHeight + chipHeight + toastHeight + 34
             return CGSize(width: width, height: totalHeight)
         case .hidden:
             return CGSize(width: 30, height: 30)
@@ -405,9 +394,10 @@ final class NotchDockViewModel: ObservableObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard !self.isPointerInsideOverlay, !self.isNearTopTrigger, !self.isDragSessionActive else { return }
-            self.overlayState = .hidden
+            withAnimation(.easeOut(duration: 0.14)) {
+                self.overlayState = .hidden
+            }
             self.dropHubState = .idle
-            self.recomputeIconLayout()
             self.refreshPresentation()
         }
         leaveGraceWorkItem = work

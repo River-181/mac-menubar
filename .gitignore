@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode / build output
+build/
+DerivedData/
+*.xcuserstate
+*.xcuserdatad
+xcuserdata/
+*.moved-aside
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# XcodeGen output — the project is generated with `xcodegen generate`.
+# The .xcodeproj is a build artifact, not source; regenerate it locally.
+*.xcodeproj/
+
+# Misc
+*.log
