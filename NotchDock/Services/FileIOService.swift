@@ -1,6 +1,6 @@
 import Foundation
 
-final class FileIOService {
+final class FileIOService: @unchecked Sendable {
     let fileManager: FileManager
     let outputRoot: URL
     let workbenchRoot: URL

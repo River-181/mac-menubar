@@ -14,12 +14,16 @@ final class OverlayWindowController {
     private let hitMask = HitMaskEngine()
 
     private var samplingMode: PointerSamplingMode = .armed
-    private var samplingTimer: Timer?
+    nonisolated(unsafe) private var samplingTimer: Timer?
     private var stateObserver: AnyCancellable?
-    private var perfTimer: Timer?
+    nonisolated(unsafe) private var perfTimer: Timer?
     private var lastCPUSample: (cpuSeconds: Double, wall: TimeInterval)?
     private var dragDetectedUntil: TimeInterval = 0
     private let signpostLog = OSLog(subsystem: "com.river.notchdock", category: "overlay")
+
+    private var activeScreen: NSScreen? {
+        NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main
+    }
 
     init(
         viewModel: NotchDockViewModel,
@@ -58,7 +62,7 @@ final class OverlayWindowController {
             let screenPoint = self.panel.convertToScreen(
                 NSRect(origin: pointInWindow, size: .zero)
             ).origin
-            guard let screen = self.panel.screen ?? NSScreen.main else { return false }
+            guard let screen = self.panel.screen ?? self.activeScreen else { return false }
             let snapshot = self.geometry.layoutSnapshot(screen: screen)
             return self.hitMask.isInsideCapsule(
                 point: screenPoint,
@@ -107,11 +111,12 @@ final class OverlayWindowController {
     }
 
     @objc private func handleScreenChanged() {
+        dragPipeline.reset()
         layoutPanel()
     }
 
     private func layoutPanel() {
-        guard let screen = NSScreen.main else { return }
+        guard let screen = activeScreen else { return }
         let frame = geometry.panelFrame(screen: screen, panelSize: viewModel.panelSize)
         if !panel.frame.equalTo(frame) {
             panel.setFrame(frame, display: false)
@@ -140,10 +145,7 @@ final class OverlayWindowController {
     private func sample() {
         let now = Date().timeIntervalSinceReferenceDate
         let point = NSEvent.mouseLocation
-        let screen = screenContaining(point: point)
-            ?? NSScreen.main
-            ?? NSScreen.screens.first
-        guard let screen else { return }
+        guard let screen = activeScreen else { return }
         let telemetry = dragPipeline.ingest(point: point, timestamp: now)
         let snapshot = geometry.layoutSnapshot(screen: screen)
 
@@ -206,10 +208,6 @@ final class OverlayWindowController {
             "com.apple.pasteboard.promised-file-url"
         ]
         return hints.contains(where: rawTypes.contains)
-    }
-
-    private func screenContaining(point: CGPoint) -> NSScreen? {
-        NSScreen.screens.first(where: { NSPointInRect(point, $0.frame) })
     }
 
     private func intervalForSamplingMode(_ mode: PointerSamplingMode) -> TimeInterval {
