@@ -6,7 +6,7 @@ protocol OfficeConverting: AnyObject {
     func convertToPDF(inputs: [URL], outputDir: URL, io: FileIOService) throws -> [URL]
 }
 
-final class LibreOfficeConverter: OfficeConverting {
+final class LibreOfficeConverter: OfficeConverting, @unchecked Sendable {
     private let fileManager: FileManager
 
     init(fileManager: FileManager = .default) {

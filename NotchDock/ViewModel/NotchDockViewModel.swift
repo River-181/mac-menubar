@@ -28,9 +28,9 @@ final class NotchDockViewModel: ObservableObject {
     private let triggerEngine: TriggerProviding
 
     private var isDropExecutionInProgress = false
-    private var leaveGraceWorkItem: DispatchWorkItem?
-    private var toastDismissWorkItem: DispatchWorkItem?
-    private var hoverLockWorkItem: DispatchWorkItem?
+    private var leaveGraceTask: Task<Void, Never>?
+    private var toastDismissTask: Task<Void, Never>?
+    private var hoverLockTask: Task<Void, Never>?
     private var lastUndoToken: UndoToken?
     private var lastTriggerEnterTimestamp: TimeInterval?
     private var dragFrameAccumulatedMs: Double = 0
@@ -218,16 +218,15 @@ final class NotchDockViewModel: ObservableObject {
         if let action {
             guard targetedAction != action else { return }
             targetedAction = action
-            hoverLockWorkItem?.cancel()
-            let work = DispatchWorkItem { [weak self] in
-                guard let self else { return }
+            hoverLockTask?.cancel()
+            hoverLockTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(0.05))
+                guard !Task.isCancelled, let self else { return }
                 if self.targetedAction == action {
                     self.dropHubState = .focused(action)
                     self.refreshPresentation()
                 }
             }
-            hoverLockWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
             return
         }
         clearTargetAction()
@@ -306,8 +305,8 @@ final class NotchDockViewModel: ObservableObject {
 
     private func clearTargetAction() {
         targetedAction = nil
-        hoverLockWorkItem?.cancel()
-        hoverLockWorkItem = nil
+        hoverLockTask?.cancel()
+        hoverLockTask = nil
     }
 
     private func refreshPresentation() {
@@ -391,8 +390,9 @@ final class NotchDockViewModel: ObservableObject {
         guard !isDragSessionActive else { return }
         guard overlayState == .peek || overlayState == .expand else { return }
         cancelLeaveGrace()
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+        leaveGraceTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(0.45))
+            guard !Task.isCancelled, let self else { return }
             guard !self.isPointerInsideOverlay, !self.isNearTopTrigger, !self.isDragSessionActive else { return }
             withAnimation(.easeOut(duration: 0.14)) {
                 self.overlayState = .hidden
@@ -400,28 +400,26 @@ final class NotchDockViewModel: ObservableObject {
             self.dropHubState = .idle
             self.refreshPresentation()
         }
-        leaveGraceWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
     }
 
     private func cancelLeaveGrace() {
-        leaveGraceWorkItem?.cancel()
-        leaveGraceWorkItem = nil
+        leaveGraceTask?.cancel()
+        leaveGraceTask = nil
     }
 
     private func showToast(_ message: String, isError: Bool) {
-        toastDismissWorkItem?.cancel()
+        toastDismissTask?.cancel()
         withAnimation(.easeInOut(duration: 0.20)) {
             toast = OverlayToast(message: message, isError: isError)
         }
-        let work = DispatchWorkItem { [weak self] in
+        toastDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3.0))
+            guard !Task.isCancelled, let self else { return }
             withAnimation(.easeInOut(duration: 0.16)) {
-                self?.toast = nil
+                self.toast = nil
             }
-            self?.refreshPresentation()
+            self.refreshPresentation()
         }
-        toastDismissWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
         refreshPresentation()
     }
 

@@ -32,10 +32,23 @@ enum WorkActionError: Error, LocalizedError {
     }
 }
 
+/// @unchecked Sendable type-erasing box for OfficeConverting.
+/// Safe: all production conformers (LibreOfficeConverter) are final classes whose only
+/// stored property is an immutable `let fileManager: FileManager` (documented thread-safe).
+/// Avoids adding `Sendable` to the public protocol, which would cascade to test mocks.
+private struct AnyOfficeConverter: @unchecked Sendable {
+    private let base: any OfficeConverting
+    var unavailableReason: String? { base.unavailableReason }
+    func convertToPDF(inputs: [URL], outputDir: URL, io: FileIOService) throws -> [URL] {
+        try base.convertToPDF(inputs: inputs, outputDir: outputDir, io: io)
+    }
+    init(_ base: any OfficeConverting) { self.base = base }
+}
+
 final class WorkActionService: WorkActionExecuting {
     private let io: FileIOService
     private let undoWindow: TimeInterval
-    private let officeConverter: OfficeConverting
+    private let officeConverter: AnyOfficeConverter
 
     init(
         io: FileIOService = FileIOService(),
@@ -44,7 +57,7 @@ final class WorkActionService: WorkActionExecuting {
     ) {
         self.io = io
         self.undoWindow = undoWindow
-        self.officeConverter = officeConverter
+        self.officeConverter = AnyOfficeConverter(officeConverter)
     }
 
     func classify(_ inputs: [URL]) -> DropPlan {
